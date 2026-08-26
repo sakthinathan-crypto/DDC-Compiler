@@ -522,7 +522,7 @@ if __name__ == '__main__':
       {
         id: 'btb2-q5-h2',
         input: '(*()',
-        expectedOutput: 'Invalid',
+        expectedOutput: 'Valid',
         isSample: false,
         marks: 2.5,
       },
