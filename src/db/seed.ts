@@ -194,11 +194,17 @@ export async function createTablesIfNotExist() {
     `ALTER TABLE contest_participants ADD COLUMN IF NOT EXISTS completion_time_seconds INTEGER NOT NULL DEFAULT 0`,
     `ALTER TABLE contest_participants ADD COLUMN IF NOT EXISTS start_time_epoch TEXT`,
     `ALTER TABLE contest_participants ADD COLUMN IF NOT EXISTS end_time_epoch TEXT`,
+    `ALTER TABLE contest_participants ADD COLUMN IF NOT EXISTS start_time TEXT`,
+    `ALTER TABLE contest_participants ADD COLUMN IF NOT EXISTS end_time TEXT`,
+    `ALTER TABLE contest_participants ALTER COLUMN start_time DROP NOT NULL`,
+    `ALTER TABLE contest_participants ALTER COLUMN end_time DROP NOT NULL`,
 
     `ALTER TABLE submissions ADD COLUMN IF NOT EXISTS execution_time_ms INTEGER NOT NULL DEFAULT 0`,
     `ALTER TABLE submissions ADD COLUMN IF NOT EXISTS compiler_output TEXT`,
     `ALTER TABLE submissions ADD COLUMN IF NOT EXISTS test_results JSONB NOT NULL DEFAULT '[]'::jsonb`,
     `ALTER TABLE submissions ADD COLUMN IF NOT EXISTS submitted_at_epoch TEXT`,
+    `ALTER TABLE submissions ADD COLUMN IF NOT EXISTS submitted_at TEXT`,
+    `ALTER TABLE submissions ALTER COLUMN submitted_at DROP NOT NULL`,
 
     `CREATE INDEX IF NOT EXISTS idx_accounts_email ON accounts(email)`,
     `CREATE INDEX IF NOT EXISTS idx_accounts_reg_no ON accounts(register_number)`,
@@ -215,11 +221,15 @@ export async function createTablesIfNotExist() {
     `CREATE INDEX IF NOT EXISTS idx_submissions_participant_id ON submissions(participant_id)`,
   ];
 
-  for (const stmt of statements) {
-    try {
-      await pool.query(stmt);
-    } catch (e: any) {
-      console.warn('Notice executing DDL migration statement:', stmt.slice(0, 40), e?.message);
+  try {
+    await pool.query(statements.join(';\n'));
+  } catch (_batchErr) {
+    for (const stmt of statements) {
+      try {
+        await pool.query(stmt);
+      } catch (_singleErr) {
+        // Safe to ignore expected column/index notice
+      }
     }
   }
 }

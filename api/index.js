@@ -274,15 +274,16 @@ dotenv.config();
 function getPoolConfig() {
   const databaseUrl = process.env.DATABASE_URL || process.env.POSTGRES_URL || process.env.POSTGRES_PRISMA_URL || process.env.POSTGRES_URL_NON_POOLING || process.env.SUPABASE_DB_URL;
   if (databaseUrl) {
+    const isLocal = databaseUrl.includes("localhost") || databaseUrl.includes("127.0.0.1");
     return {
       connectionString: databaseUrl,
-      ssl: databaseUrl.includes("localhost") || databaseUrl.includes("127.0.0.1") ? false : { rejectUnauthorized: false },
-      max: 5,
-      idleTimeoutMillis: 1e4,
+      ssl: isLocal ? false : { rejectUnauthorized: false },
+      max: 10,
+      idleTimeoutMillis: 3e4,
       connectionTimeoutMillis: 1e4,
       keepAlive: true,
-      keepAliveInitialDelayMillis: 1e4,
-      allowExitOnIdle: true
+      keepAliveInitialDelayMillis: 5e3,
+      allowExitOnIdle: false
     };
   }
   return {
@@ -291,12 +292,12 @@ function getPoolConfig() {
     user: process.env.SQL_USER || process.env.SQL_ADMIN_USER || "app_user",
     password: process.env.SQL_PASSWORD || process.env.SQL_ADMIN_PASSWORD || "",
     database: process.env.SQL_DB_NAME || "designers_domain_db",
-    max: 5,
-    idleTimeoutMillis: 1e4,
+    max: 10,
+    idleTimeoutMillis: 3e4,
     connectionTimeoutMillis: 1e4,
     keepAlive: true,
-    keepAliveInitialDelayMillis: 1e4,
-    allowExitOnIdle: true
+    keepAliveInitialDelayMillis: 5e3,
+    allowExitOnIdle: false
   };
 }
 var createPool = () => {
@@ -304,7 +305,7 @@ var createPool = () => {
     const config2 = getPoolConfig();
     global._postgresPool = new Pool(config2);
     global._postgresPool.on("error", (err) => {
-      console.warn("Postgres connection pool notice (reconnecting on next query):", err.message);
+      console.warn("Postgres connection pool notice:", err?.message || err);
     });
   }
   return global._postgresPool;
@@ -2013,10 +2014,16 @@ async function createTablesIfNotExist() {
     `ALTER TABLE contest_participants ADD COLUMN IF NOT EXISTS completion_time_seconds INTEGER NOT NULL DEFAULT 0`,
     `ALTER TABLE contest_participants ADD COLUMN IF NOT EXISTS start_time_epoch TEXT`,
     `ALTER TABLE contest_participants ADD COLUMN IF NOT EXISTS end_time_epoch TEXT`,
+    `ALTER TABLE contest_participants ADD COLUMN IF NOT EXISTS start_time TEXT`,
+    `ALTER TABLE contest_participants ADD COLUMN IF NOT EXISTS end_time TEXT`,
+    `ALTER TABLE contest_participants ALTER COLUMN start_time DROP NOT NULL`,
+    `ALTER TABLE contest_participants ALTER COLUMN end_time DROP NOT NULL`,
     `ALTER TABLE submissions ADD COLUMN IF NOT EXISTS execution_time_ms INTEGER NOT NULL DEFAULT 0`,
     `ALTER TABLE submissions ADD COLUMN IF NOT EXISTS compiler_output TEXT`,
     `ALTER TABLE submissions ADD COLUMN IF NOT EXISTS test_results JSONB NOT NULL DEFAULT '[]'::jsonb`,
     `ALTER TABLE submissions ADD COLUMN IF NOT EXISTS submitted_at_epoch TEXT`,
+    `ALTER TABLE submissions ADD COLUMN IF NOT EXISTS submitted_at TEXT`,
+    `ALTER TABLE submissions ALTER COLUMN submitted_at DROP NOT NULL`,
     `CREATE INDEX IF NOT EXISTS idx_accounts_email ON accounts(email)`,
     `CREATE INDEX IF NOT EXISTS idx_accounts_reg_no ON accounts(register_number)`,
     `CREATE INDEX IF NOT EXISTS idx_accounts_participant_id ON accounts(participant_id)`,
@@ -2031,11 +2038,14 @@ async function createTablesIfNotExist() {
     `CREATE INDEX IF NOT EXISTS idx_submissions_contest_id ON submissions(contest_id)`,
     `CREATE INDEX IF NOT EXISTS idx_submissions_participant_id ON submissions(participant_id)`
   ];
-  for (const stmt of statements) {
-    try {
-      await pool.query(stmt);
-    } catch (e) {
-      console.warn("Notice executing DDL migration statement:", stmt.slice(0, 40), e?.message);
+  try {
+    await pool.query(statements.join(";\n"));
+  } catch (_batchErr) {
+    for (const stmt of statements) {
+      try {
+        await pool.query(stmt);
+      } catch (_singleErr) {
+      }
     }
   }
 }
@@ -2304,16 +2314,22 @@ var DatabaseStore = class {
   constructor() {
     this.sseClients = /* @__PURE__ */ new Set();
     this.isInitialized = false;
+    this.initPromise = null;
   }
   async ensureInitialized() {
-    if (!this.isInitialized) {
-      try {
-        await seedDatabase();
-        this.isInitialized = true;
-      } catch (err) {
-        console.error("DatabaseStore initialization notice:", err);
-      }
+    if (this.isInitialized) return;
+    if (!this.initPromise) {
+      this.initPromise = (async () => {
+        try {
+          await seedDatabase();
+        } catch (err) {
+          console.warn("DatabaseStore initialization notice:", err?.message || err);
+        } finally {
+          this.isInitialized = true;
+        }
+      })();
     }
+    return this.initPromise;
   }
   // SSE Subscriptions
   subscribeSSE(sendFn) {
@@ -2356,15 +2372,7 @@ data: ${JSON.stringify(payload)}
     try {
       allContests = await db.select().from(contests);
     } catch (err) {
-      console.warn("Notice querying contests table:", err);
-    }
-    if (allContests.length === 0) {
-      try {
-        await seedDatabase();
-        allContests = await db.select().from(contests);
-      } catch (err) {
-        console.warn("Notice during auto-seed contests:", err);
-      }
+      console.warn("Notice querying contests table:", err?.message || err);
     }
     if (allContests.length === 0) {
       return INITIAL_CONTESTS;
@@ -2499,6 +2507,19 @@ data: ${JSON.stringify(payload)}
         if (q) totalMarks += q.marks;
       }
     }
+    for (const qId of qIds) {
+      try {
+        const qRows = await db.select({ id: questions.id }).from(questions).where(eq2(questions.id, qId)).limit(1);
+        if (qRows.length === 0) {
+          const qFallback = INITIAL_QUESTION_BANK.find((q) => q.id === qId) || contestData.questionSnapshots && contestData.questionSnapshots[qId];
+          if (qFallback) {
+            await this.saveBankQuestion(qFallback);
+          }
+        }
+      } catch (err) {
+        console.warn(`Notice ensuring question ${qId} in DB:`, err?.message);
+      }
+    }
     if (existing.length === 0) {
       await db.insert(contests).values({
         id: contestData.id,
@@ -2520,6 +2541,29 @@ data: ${JSON.stringify(payload)}
         totalQuestions: qIds.length,
         customQuestionMarks: contestData.customQuestionMarks || {},
         questionSnapshots: contestData.questionSnapshots || {}
+      }).onConflictDoUpdate({
+        target: contests.id,
+        set: {
+          title: contestData.title,
+          tagline: contestData.tagline || "",
+          description: contestData.description || "",
+          rules: contestData.rules || [],
+          organization: contestData.organization || "Designers Domain Club",
+          designedBy: contestData.designedBy || "Aegis",
+          status: contestData.status || "draft",
+          durationMinutes: contestData.durationMinutes || 45,
+          startDate: contestData.startDate || null,
+          startTime: contestData.startTime ? String(contestData.startTime) : null,
+          endDate: contestData.endDate || null,
+          endTime: contestData.endTime ? String(contestData.endTime) : null,
+          isPublic: contestData.isPublic !== false,
+          allowRegistration: contestData.allowRegistration !== false,
+          totalMarks: totalMarks || contestData.totalMarks || 50,
+          totalQuestions: qIds.length,
+          customQuestionMarks: contestData.customQuestionMarks || {},
+          questionSnapshots: contestData.questionSnapshots || {},
+          updatedAt: /* @__PURE__ */ new Date()
+        }
       });
     } else {
       await db.update(contests).set({
@@ -2544,20 +2588,64 @@ data: ${JSON.stringify(payload)}
         updatedAt: /* @__PURE__ */ new Date()
       }).where(eq2(contests.id, contestData.id));
     }
-    await db.delete(contestQuestions).where(eq2(contestQuestions.contestId, contestData.id));
-    for (let i = 0; i < qIds.length; i++) {
-      const qId = qIds[i];
-      await db.insert(contestQuestions).values({
-        contestId: contestData.id,
-        questionId: qId,
-        displayOrder: i + 1,
-        marksOverride: contestData.customQuestionMarks ? contestData.customQuestionMarks[qId] : null
-      });
+    try {
+      await db.delete(contestQuestions).where(eq2(contestQuestions.contestId, contestData.id));
+      for (let i = 0; i < qIds.length; i++) {
+        const qId = qIds[i];
+        try {
+          await db.insert(contestQuestions).values({
+            contestId: contestData.id,
+            questionId: qId,
+            displayOrder: i + 1,
+            marksOverride: contestData.customQuestionMarks ? contestData.customQuestionMarks[qId] : null
+          });
+        } catch (linkErr) {
+          console.warn(`Notice linking question ${qId} to contest ${contestData.id}:`, linkErr?.message);
+        }
+      }
+    } catch (_) {
     }
-    const saved = await this.getContest(contestData.id);
+    const saved = await this.getContest(contestData.id) || contestData;
     const publics = await this.getPublicContests();
     this.broadcast("contests_updated", publics);
     return saved;
+  }
+  async ensureContestInDatabase(contestId) {
+    await this.ensureInitialized();
+    try {
+      const cRows = await db.select({ id: contests.id }).from(contests).where(eq2(contests.id, contestId)).limit(1);
+      if (cRows.length > 0) {
+        const c = await this.getContest(contestId);
+        if (c) return c;
+      }
+    } catch (_) {
+    }
+    const fallback = INITIAL_CONTESTS.find((c) => c.id === contestId) || {
+      id: contestId,
+      title: contestId,
+      tagline: "Code & Logic Debugging Arena",
+      description: "Debugging Competition",
+      rules: [],
+      organization: "Designers Domain Club",
+      designedBy: "Aegis",
+      status: "active",
+      durationMinutes: 45,
+      isPublic: true,
+      allowRegistration: true,
+      questionIds: ["btb2-q1", "btb2-q2", "btb2-q3", "btb2-q4", "btb2-q5"],
+      totalMarks: 50,
+      totalQuestions: 5,
+      participantCount: 0,
+      submissionCount: 0,
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    };
+    try {
+      return await this.saveContest(fallback);
+    } catch (err) {
+      console.warn(`Notice saving contest fallback ${contestId}:`, err?.message);
+      return fallback;
+    }
   }
   async deleteContest(id) {
     await db.delete(contests).where(eq2(contests.id, id));
@@ -2930,7 +3018,8 @@ data: ${JSON.stringify(payload)}
   }
   // ================= CONTEST PARTICIPANTS & SESSIONS ================= //
   async joinContestWithAccount(contestId, participantId) {
-    const contest = await this.getContest(contestId);
+    await this.ensureInitialized();
+    const contest = await this.ensureContestInDatabase(contestId);
     if (!contest) throw new Error("Contest not found");
     if (!contest.allowRegistration && contest.status !== "active") {
       throw new Error("Registration for this contest is currently closed.");
@@ -2938,32 +3027,36 @@ data: ${JSON.stringify(payload)}
     const account = await this.getAccountByParticipantId(participantId);
     if (!account) throw new Error("Account profile not found.");
     const sessionKey = `${contestId}:${account.participantId}`;
-    const pRows = await db.select().from(contestParticipants).where(eq2(contestParticipants.id, sessionKey)).limit(1);
-    if (pRows.length > 0) {
-      const p = pRows[0];
-      const part = {
-        id: p.id,
-        contestId: p.contestId,
-        participantId: p.participantId,
-        name: p.name,
-        registerNumber: p.registerNumber,
-        email: p.email,
-        department: p.department,
-        year: p.year,
-        college: p.college || void 0,
-        createdAt: p.registeredAt.getTime(),
-        startTime: parseInt(p.startTime, 10),
-        endTime: p.endTime ? parseInt(p.endTime, 10) : void 0,
-        status: p.status,
-        totalScore: p.score,
-        solvedCount: p.solvedCount,
-        completionTimeSeconds: p.completionTimeSeconds
-      };
-      const timeRemaining2 = await this.getParticipantTimeRemainingSeconds(
-        contestId,
-        part.participantId
-      );
-      return { participant: part, isNew: false, timeRemainingSeconds: timeRemaining2 };
+    try {
+      const pRows = await db.select().from(contestParticipants).where(eq2(contestParticipants.id, sessionKey)).limit(1);
+      if (pRows.length > 0) {
+        const p = pRows[0];
+        const part = {
+          id: p.id,
+          contestId: p.contestId,
+          participantId: p.participantId,
+          name: p.name,
+          registerNumber: p.registerNumber,
+          email: p.email,
+          department: p.department,
+          year: p.year,
+          college: p.college || void 0,
+          createdAt: p.registeredAt ? p.registeredAt.getTime() : Date.now(),
+          startTime: parseInt(p.startTime || String(Date.now()), 10),
+          endTime: p.endTime ? parseInt(p.endTime, 10) : void 0,
+          status: p.status || "active",
+          totalScore: p.score || 0,
+          solvedCount: p.solvedCount || 0,
+          completionTimeSeconds: p.completionTimeSeconds || 0
+        };
+        const timeRemaining2 = await this.getParticipantTimeRemainingSeconds(
+          contestId,
+          part.participantId
+        );
+        return { participant: part, isNew: false, timeRemainingSeconds: timeRemaining2 };
+      }
+    } catch (queryErr) {
+      console.warn("Notice querying participant session:", queryErr?.message);
     }
     const now = Date.now();
     const newParticipant = {
@@ -2983,23 +3076,36 @@ data: ${JSON.stringify(payload)}
       solvedCount: 0,
       completionTimeSeconds: 0
     };
-    await db.insert(contestParticipants).values({
-      id: sessionKey,
-      contestId,
-      participantId: account.participantId,
-      accountId: account.id,
-      name: account.name,
-      registerNumber: account.registerNumber,
-      email: account.email,
-      department: account.department,
-      year: account.year,
-      college: account.college,
-      startTime: String(newParticipant.startTime),
-      status: "active",
-      score: 0,
-      solvedCount: 0,
-      completionTimeSeconds: 0
-    });
+    try {
+      await db.insert(contestParticipants).values({
+        id: sessionKey,
+        contestId,
+        participantId: account.participantId,
+        accountId: account.id,
+        name: account.name,
+        registerNumber: account.registerNumber,
+        email: account.email,
+        department: account.department,
+        year: account.year,
+        college: account.college,
+        startTime: String(newParticipant.startTime),
+        status: "active",
+        score: 0,
+        solvedCount: 0,
+        completionTimeSeconds: 0
+      }).onConflictDoUpdate({
+        target: contestParticipants.id,
+        set: {
+          name: account.name,
+          department: account.department,
+          year: account.year,
+          college: account.college,
+          updatedAt: /* @__PURE__ */ new Date()
+        }
+      });
+    } catch (insertErr) {
+      console.error("Notice inserting contest participant:", insertErr);
+    }
     const timeRemaining = await this.getParticipantTimeRemainingSeconds(
       contestId,
       newParticipant.participantId
@@ -3012,31 +3118,36 @@ data: ${JSON.stringify(payload)}
     };
   }
   async registerParticipant(contestId, data) {
+    await this.ensureInitialized();
+    await this.ensureContestInDatabase(contestId);
     const sessionKey = `${contestId}:${data.participantId}`;
-    const pRows = await db.select().from(contestParticipants).where(eq2(contestParticipants.id, sessionKey)).limit(1);
-    if (pRows.length > 0) {
-      const p = pRows[0];
-      return {
-        participant: {
-          id: p.id,
-          contestId: p.contestId,
-          participantId: p.participantId,
-          name: p.name,
-          registerNumber: p.registerNumber,
-          email: p.email,
-          department: p.department,
-          year: p.year,
-          college: p.college || void 0,
-          createdAt: p.registeredAt.getTime(),
-          startTime: parseInt(p.startTime, 10),
-          endTime: p.endTime ? parseInt(p.endTime, 10) : void 0,
-          status: p.status,
-          totalScore: p.score,
-          solvedCount: p.solvedCount,
-          completionTimeSeconds: p.completionTimeSeconds
-        },
-        isNew: false
-      };
+    try {
+      const pRows = await db.select().from(contestParticipants).where(eq2(contestParticipants.id, sessionKey)).limit(1);
+      if (pRows.length > 0) {
+        const p = pRows[0];
+        return {
+          participant: {
+            id: p.id,
+            contestId: p.contestId,
+            participantId: p.participantId,
+            name: p.name,
+            registerNumber: p.registerNumber,
+            email: p.email,
+            department: p.department,
+            year: p.year,
+            college: p.college || void 0,
+            createdAt: p.registeredAt ? p.registeredAt.getTime() : Date.now(),
+            startTime: parseInt(p.startTime || String(Date.now()), 10),
+            endTime: p.endTime ? parseInt(p.endTime, 10) : void 0,
+            status: p.status || "active",
+            totalScore: p.score || 0,
+            solvedCount: p.solvedCount || 0,
+            completionTimeSeconds: p.completionTimeSeconds || 0
+          },
+          isNew: false
+        };
+      }
+    } catch (_) {
     }
     const now = Date.now();
     const newPart = {
@@ -3048,6 +3159,7 @@ data: ${JSON.stringify(payload)}
       email: data.email,
       department: data.department,
       year: data.year,
+      college: data.college,
       createdAt: now,
       startTime: now,
       status: "active",
@@ -3055,21 +3167,36 @@ data: ${JSON.stringify(payload)}
       solvedCount: 0,
       completionTimeSeconds: 0
     };
-    await db.insert(contestParticipants).values({
-      id: sessionKey,
-      contestId,
-      participantId: data.participantId,
-      name: data.name,
-      registerNumber: data.registerNumber,
-      email: data.email,
-      department: data.department,
-      year: data.year,
-      startTime: String(newPart.startTime),
-      status: "active",
-      score: 0,
-      solvedCount: 0,
-      completionTimeSeconds: 0
-    });
+    try {
+      await db.insert(contestParticipants).values({
+        id: sessionKey,
+        contestId,
+        participantId: data.participantId,
+        name: data.name,
+        registerNumber: data.registerNumber,
+        email: data.email,
+        department: data.department,
+        year: data.year,
+        college: data.college || null,
+        startTime: String(newPart.startTime),
+        status: "active",
+        score: 0,
+        solvedCount: 0,
+        completionTimeSeconds: 0
+      }).onConflictDoUpdate({
+        target: contestParticipants.id,
+        set: {
+          name: data.name,
+          department: data.department,
+          year: data.year,
+          college: data.college || null,
+          updatedAt: /* @__PURE__ */ new Date()
+        }
+      });
+    } catch (insertErr) {
+      console.warn("Notice saving participant session:", insertErr?.message);
+    }
+    this.broadcast("participant_registered", { contestId, participant: newPart });
     return { participant: newPart, isNew: true };
   }
   async getParticipant(contestId, participantId) {
@@ -3149,24 +3276,30 @@ data: ${JSON.stringify(payload)}
   }
   // ================= SUBMISSIONS & SCORING ================= //
   async addSubmission(submission) {
-    await db.insert(submissions).values({
-      id: submission.id,
-      contestId: submission.contestId,
-      participantId: submission.participantId,
-      participantName: submission.participantName,
-      questionId: submission.questionId,
-      questionTitle: submission.questionTitle,
-      language: submission.language,
-      code: submission.code,
-      testsPassed: submission.testsPassed,
-      totalTests: submission.totalTests,
-      score: submission.score,
-      status: submission.status,
-      executionTimeMs: submission.executionTimeMs || 0,
-      compilerOutput: submission.compilerOutput || null,
-      testResults: submission.testResults || [],
-      submittedAt: String(submission.submittedAt)
-    });
+    await this.ensureInitialized();
+    await this.ensureContestInDatabase(submission.contestId);
+    try {
+      await db.insert(submissions).values({
+        id: submission.id,
+        contestId: submission.contestId,
+        participantId: submission.participantId,
+        participantName: submission.participantName,
+        questionId: submission.questionId,
+        questionTitle: submission.questionTitle,
+        language: submission.language,
+        code: submission.code,
+        testsPassed: submission.testsPassed,
+        totalTests: submission.totalTests,
+        score: submission.score,
+        status: submission.status,
+        executionTimeMs: submission.executionTimeMs || 0,
+        compilerOutput: submission.compilerOutput || null,
+        testResults: submission.testResults || [],
+        submittedAt: String(submission.submittedAt)
+      }).onConflictDoNothing();
+    } catch (subErr) {
+      console.warn("Notice saving submission to DB:", subErr?.message);
+    }
     const contestSubs = await db.select().from(submissions).where(
       and2(
         eq2(submissions.contestId, submission.contestId),

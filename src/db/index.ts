@@ -19,17 +19,16 @@ export function getPoolConfig(): PoolConfig {
     process.env.SUPABASE_DB_URL;
 
   if (databaseUrl) {
+    const isLocal = databaseUrl.includes('localhost') || databaseUrl.includes('127.0.0.1');
     return {
       connectionString: databaseUrl,
-      ssl: databaseUrl.includes('localhost') || databaseUrl.includes('127.0.0.1')
-        ? false
-        : { rejectUnauthorized: false },
-      max: 5,
-      idleTimeoutMillis: 10000,
+      ssl: isLocal ? false : { rejectUnauthorized: false },
+      max: 10,
+      idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 10000,
       keepAlive: true,
-      keepAliveInitialDelayMillis: 10000,
-      allowExitOnIdle: true,
+      keepAliveInitialDelayMillis: 5000,
+      allowExitOnIdle: false,
     };
   }
 
@@ -40,12 +39,12 @@ export function getPoolConfig(): PoolConfig {
     user: process.env.SQL_USER || process.env.SQL_ADMIN_USER || 'app_user',
     password: process.env.SQL_PASSWORD || process.env.SQL_ADMIN_PASSWORD || '',
     database: process.env.SQL_DB_NAME || 'designers_domain_db',
-    max: 5,
-    idleTimeoutMillis: 10000,
+    max: 10,
+    idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 10000,
     keepAlive: true,
-    keepAliveInitialDelayMillis: 10000,
-    allowExitOnIdle: true,
+    keepAliveInitialDelayMillis: 5000,
+    allowExitOnIdle: false,
   };
 }
 
@@ -55,8 +54,8 @@ export const createPool = (): Pool => {
     global._postgresPool = new Pool(config);
 
     global._postgresPool.on('error', (err) => {
-      // Ignore transient socket resets/breaks in serverless pools
-      console.warn('Postgres connection pool notice (reconnecting on next query):', err.message);
+      // Log connection notices without throwing unhandled rejection
+      console.warn('Postgres connection pool notice:', err?.message || err);
     });
   }
   return global._postgresPool;

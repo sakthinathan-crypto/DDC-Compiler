@@ -27,16 +27,22 @@ import {
 export class DatabaseStore {
   private sseClients: Set<(data: string) => void> = new Set();
   private isInitialized = false;
+  private initPromise: Promise<void> | null = null;
 
   public async ensureInitialized() {
-    if (!this.isInitialized) {
-      try {
-        await seedDatabase();
-        this.isInitialized = true;
-      } catch (err) {
-        console.error('DatabaseStore initialization notice:', err);
-      }
+    if (this.isInitialized) return;
+    if (!this.initPromise) {
+      this.initPromise = (async () => {
+        try {
+          await seedDatabase();
+        } catch (err: any) {
+          console.warn('DatabaseStore initialization notice:', err?.message || err);
+        } finally {
+          this.isInitialized = true;
+        }
+      })();
     }
+    return this.initPromise;
   }
 
   // SSE Subscriptions
@@ -85,17 +91,7 @@ export class DatabaseStore {
     try {
       allContests = await db.select().from(contests);
     } catch (err) {
-      console.warn('Notice querying contests table:', err);
-    }
-
-    // If database is empty or unpopulated, try seeding
-    if (allContests.length === 0) {
-      try {
-        await seedDatabase();
-        allContests = await db.select().from(contests);
-      } catch (err) {
-        console.warn('Notice during auto-seed contests:', err);
-      }
+      console.warn('Notice querying contests table:', (err as any)?.message || err);
     }
 
     if (allContests.length === 0) {
@@ -269,6 +265,21 @@ export class DatabaseStore {
       }
     }
 
+    // Ensure questions exist in DB table before setting up foreign key relations
+    for (const qId of qIds) {
+      try {
+        const qRows = await db.select({ id: questions.id }).from(questions).where(eq(questions.id, qId)).limit(1);
+        if (qRows.length === 0) {
+          const qFallback = INITIAL_QUESTION_BANK.find((q) => q.id === qId) || (contestData.questionSnapshots && contestData.questionSnapshots[qId]);
+          if (qFallback) {
+            await this.saveBankQuestion(qFallback);
+          }
+        }
+      } catch (err) {
+        console.warn(`Notice ensuring question ${qId} in DB:`, (err as any)?.message);
+      }
+    }
+
     if (existing.length === 0) {
       await db.insert(contests).values({
         id: contestData.id,
@@ -290,6 +301,29 @@ export class DatabaseStore {
         totalQuestions: qIds.length,
         customQuestionMarks: contestData.customQuestionMarks || {},
         questionSnapshots: contestData.questionSnapshots || {},
+      }).onConflictDoUpdate({
+        target: contests.id,
+        set: {
+          title: contestData.title,
+          tagline: contestData.tagline || '',
+          description: contestData.description || '',
+          rules: contestData.rules || [],
+          organization: contestData.organization || 'Designers Domain Club',
+          designedBy: contestData.designedBy || 'Aegis',
+          status: contestData.status || 'draft',
+          durationMinutes: contestData.durationMinutes || 45,
+          startDate: contestData.startDate || null,
+          startTime: contestData.startTime ? String(contestData.startTime) : null,
+          endDate: contestData.endDate || null,
+          endTime: contestData.endTime ? String(contestData.endTime) : null,
+          isPublic: contestData.isPublic !== false,
+          allowRegistration: contestData.allowRegistration !== false,
+          totalMarks: totalMarks || contestData.totalMarks || 50,
+          totalQuestions: qIds.length,
+          customQuestionMarks: contestData.customQuestionMarks || {},
+          questionSnapshots: contestData.questionSnapshots || {},
+          updatedAt: new Date(),
+        },
       });
     } else {
       await db
@@ -319,23 +353,68 @@ export class DatabaseStore {
     }
 
     // Refresh contest questions
-    await db.delete(contestQuestions).where(eq(contestQuestions.contestId, contestData.id));
-    for (let i = 0; i < qIds.length; i++) {
-      const qId = qIds[i];
-      await db.insert(contestQuestions).values({
-        contestId: contestData.id,
-        questionId: qId,
-        displayOrder: i + 1,
-        marksOverride: contestData.customQuestionMarks
-          ? contestData.customQuestionMarks[qId]
-          : null,
-      });
-    }
+    try {
+      await db.delete(contestQuestions).where(eq(contestQuestions.contestId, contestData.id));
+      for (let i = 0; i < qIds.length; i++) {
+        const qId = qIds[i];
+        try {
+          await db.insert(contestQuestions).values({
+            contestId: contestData.id,
+            questionId: qId,
+            displayOrder: i + 1,
+            marksOverride: contestData.customQuestionMarks
+              ? contestData.customQuestionMarks[qId]
+              : null,
+          });
+        } catch (linkErr) {
+          console.warn(`Notice linking question ${qId} to contest ${contestData.id}:`, (linkErr as any)?.message);
+        }
+      }
+    } catch (_) {}
 
-    const saved = (await this.getContest(contestData.id))!;
+    const saved = (await this.getContest(contestData.id)) || contestData;
     const publics = await this.getPublicContests();
     this.broadcast('contests_updated', publics);
     return saved;
+  }
+
+  public async ensureContestInDatabase(contestId: string): Promise<Contest> {
+    await this.ensureInitialized();
+    try {
+      const cRows = await db.select({ id: contests.id }).from(contests).where(eq(contests.id, contestId)).limit(1);
+      if (cRows.length > 0) {
+        const c = await this.getContest(contestId);
+        if (c) return c;
+      }
+    } catch (_) {}
+
+    const fallback = INITIAL_CONTESTS.find((c) => c.id === contestId) || {
+      id: contestId,
+      title: contestId,
+      tagline: 'Code & Logic Debugging Arena',
+      description: 'Debugging Competition',
+      rules: [],
+      organization: 'Designers Domain Club',
+      designedBy: 'Aegis',
+      status: 'active',
+      durationMinutes: 45,
+      isPublic: true,
+      allowRegistration: true,
+      questionIds: ['btb2-q1', 'btb2-q2', 'btb2-q3', 'btb2-q4', 'btb2-q5'],
+      totalMarks: 50,
+      totalQuestions: 5,
+      participantCount: 0,
+      submissionCount: 0,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+
+    try {
+      return await this.saveContest(fallback);
+    } catch (err) {
+      console.warn(`Notice saving contest fallback ${contestId}:`, (err as any)?.message);
+      return fallback;
+    }
   }
 
   public async deleteContest(id: string): Promise<boolean> {
@@ -827,7 +906,8 @@ export class DatabaseStore {
     contestId: string,
     participantId: string
   ): Promise<{ participant: Participant; isNew: boolean; timeRemainingSeconds: number }> {
-    const contest = await this.getContest(contestId);
+    await this.ensureInitialized();
+    const contest = await this.ensureContestInDatabase(contestId);
     if (!contest) throw new Error('Contest not found');
     if (!contest.allowRegistration && contest.status !== 'active') {
       throw new Error('Registration for this contest is currently closed.');
@@ -837,37 +917,41 @@ export class DatabaseStore {
     if (!account) throw new Error('Account profile not found.');
 
     const sessionKey = `${contestId}:${account.participantId}`;
-    const pRows = await db
-      .select()
-      .from(contestParticipants)
-      .where(eq(contestParticipants.id, sessionKey))
-      .limit(1);
+    try {
+      const pRows = await db
+        .select()
+        .from(contestParticipants)
+        .where(eq(contestParticipants.id, sessionKey))
+        .limit(1);
 
-    if (pRows.length > 0) {
-      const p = pRows[0];
-      const part: Participant = {
-        id: p.id,
-        contestId: p.contestId,
-        participantId: p.participantId,
-        name: p.name,
-        registerNumber: p.registerNumber,
-        email: p.email,
-        department: p.department,
-        year: p.year,
-        college: p.college || undefined,
-        createdAt: p.registeredAt.getTime(),
-        startTime: parseInt(p.startTime, 10),
-        endTime: p.endTime ? parseInt(p.endTime, 10) : undefined,
-        status: p.status as any,
-        totalScore: p.score,
-        solvedCount: p.solvedCount,
-        completionTimeSeconds: p.completionTimeSeconds,
-      };
-      const timeRemaining = await this.getParticipantTimeRemainingSeconds(
-        contestId,
-        part.participantId
-      );
-      return { participant: part, isNew: false, timeRemainingSeconds: timeRemaining };
+      if (pRows.length > 0) {
+        const p = pRows[0];
+        const part: Participant = {
+          id: p.id,
+          contestId: p.contestId,
+          participantId: p.participantId,
+          name: p.name,
+          registerNumber: p.registerNumber,
+          email: p.email,
+          department: p.department,
+          year: p.year,
+          college: p.college || undefined,
+          createdAt: p.registeredAt ? p.registeredAt.getTime() : Date.now(),
+          startTime: parseInt(p.startTime || String(Date.now()), 10),
+          endTime: p.endTime ? parseInt(p.endTime, 10) : undefined,
+          status: (p.status as any) || 'active',
+          totalScore: p.score || 0,
+          solvedCount: p.solvedCount || 0,
+          completionTimeSeconds: p.completionTimeSeconds || 0,
+        };
+        const timeRemaining = await this.getParticipantTimeRemainingSeconds(
+          contestId,
+          part.participantId
+        );
+        return { participant: part, isNew: false, timeRemainingSeconds: timeRemaining };
+      }
+    } catch (queryErr) {
+      console.warn('Notice querying participant session:', (queryErr as any)?.message);
     }
 
     const now = Date.now();
@@ -889,23 +973,39 @@ export class DatabaseStore {
       completionTimeSeconds: 0,
     };
 
-    await db.insert(contestParticipants).values({
-      id: sessionKey,
-      contestId,
-      participantId: account.participantId,
-      accountId: account.id,
-      name: account.name,
-      registerNumber: account.registerNumber,
-      email: account.email,
-      department: account.department,
-      year: account.year,
-      college: account.college,
-      startTime: String(newParticipant.startTime),
-      status: 'active',
-      score: 0,
-      solvedCount: 0,
-      completionTimeSeconds: 0,
-    });
+    try {
+      await db
+        .insert(contestParticipants)
+        .values({
+          id: sessionKey,
+          contestId,
+          participantId: account.participantId,
+          accountId: account.id,
+          name: account.name,
+          registerNumber: account.registerNumber,
+          email: account.email,
+          department: account.department,
+          year: account.year,
+          college: account.college,
+          startTime: String(newParticipant.startTime),
+          status: 'active',
+          score: 0,
+          solvedCount: 0,
+          completionTimeSeconds: 0,
+        })
+        .onConflictDoUpdate({
+          target: contestParticipants.id,
+          set: {
+            name: account.name,
+            department: account.department,
+            year: account.year,
+            college: account.college,
+            updatedAt: new Date(),
+          },
+        });
+    } catch (insertErr) {
+      console.error('Notice inserting contest participant:', insertErr);
+    }
 
     const timeRemaining = await this.getParticipantTimeRemainingSeconds(
       contestId,
@@ -929,39 +1029,45 @@ export class DatabaseStore {
       year: string;
       email: string;
       participantId: string;
+      college?: string;
     }
   ) {
-    const sessionKey = `${contestId}:${data.participantId}`;
-    const pRows = await db
-      .select()
-      .from(contestParticipants)
-      .where(eq(contestParticipants.id, sessionKey))
-      .limit(1);
+    await this.ensureInitialized();
+    await this.ensureContestInDatabase(contestId);
 
-    if (pRows.length > 0) {
-      const p = pRows[0];
-      return {
-        participant: {
-          id: p.id,
-          contestId: p.contestId,
-          participantId: p.participantId,
-          name: p.name,
-          registerNumber: p.registerNumber,
-          email: p.email,
-          department: p.department,
-          year: p.year,
-          college: p.college || undefined,
-          createdAt: p.registeredAt.getTime(),
-          startTime: parseInt(p.startTime, 10),
-          endTime: p.endTime ? parseInt(p.endTime, 10) : undefined,
-          status: p.status as any,
-          totalScore: p.score,
-          solvedCount: p.solvedCount,
-          completionTimeSeconds: p.completionTimeSeconds,
-        },
-        isNew: false,
-      };
-    }
+    const sessionKey = `${contestId}:${data.participantId}`;
+    try {
+      const pRows = await db
+        .select()
+        .from(contestParticipants)
+        .where(eq(contestParticipants.id, sessionKey))
+        .limit(1);
+
+      if (pRows.length > 0) {
+        const p = pRows[0];
+        return {
+          participant: {
+            id: p.id,
+            contestId: p.contestId,
+            participantId: p.participantId,
+            name: p.name,
+            registerNumber: p.registerNumber,
+            email: p.email,
+            department: p.department,
+            year: p.year,
+            college: p.college || undefined,
+            createdAt: p.registeredAt ? p.registeredAt.getTime() : Date.now(),
+            startTime: parseInt(p.startTime || String(Date.now()), 10),
+            endTime: p.endTime ? parseInt(p.endTime, 10) : undefined,
+            status: (p.status as any) || 'active',
+            totalScore: p.score || 0,
+            solvedCount: p.solvedCount || 0,
+            completionTimeSeconds: p.completionTimeSeconds || 0,
+          },
+          isNew: false,
+        };
+      }
+    } catch (_) {}
 
     const now = Date.now();
     const newPart: Participant = {
@@ -973,6 +1079,7 @@ export class DatabaseStore {
       email: data.email,
       department: data.department,
       year: data.year,
+      college: data.college,
       createdAt: now,
       startTime: now,
       status: 'active',
@@ -981,22 +1088,40 @@ export class DatabaseStore {
       completionTimeSeconds: 0,
     };
 
-    await db.insert(contestParticipants).values({
-      id: sessionKey,
-      contestId,
-      participantId: data.participantId,
-      name: data.name,
-      registerNumber: data.registerNumber,
-      email: data.email,
-      department: data.department,
-      year: data.year,
-      startTime: String(newPart.startTime),
-      status: 'active',
-      score: 0,
-      solvedCount: 0,
-      completionTimeSeconds: 0,
-    });
+    try {
+      await db
+        .insert(contestParticipants)
+        .values({
+          id: sessionKey,
+          contestId,
+          participantId: data.participantId,
+          name: data.name,
+          registerNumber: data.registerNumber,
+          email: data.email,
+          department: data.department,
+          year: data.year,
+          college: data.college || null,
+          startTime: String(newPart.startTime),
+          status: 'active',
+          score: 0,
+          solvedCount: 0,
+          completionTimeSeconds: 0,
+        })
+        .onConflictDoUpdate({
+          target: contestParticipants.id,
+          set: {
+            name: data.name,
+            department: data.department,
+            year: data.year,
+            college: data.college || null,
+            updatedAt: new Date(),
+          },
+        });
+    } catch (insertErr) {
+      console.warn('Notice saving participant session:', (insertErr as any)?.message);
+    }
 
+    this.broadcast('participant_registered', { contestId, participant: newPart });
     return { participant: newPart, isNew: true };
   }
 
@@ -1107,24 +1232,31 @@ export class DatabaseStore {
 
   // ================= SUBMISSIONS & SCORING ================= //
   public async addSubmission(submission: Submission): Promise<void> {
-    await db.insert(submissions).values({
-      id: submission.id,
-      contestId: submission.contestId,
-      participantId: submission.participantId,
-      participantName: submission.participantName,
-      questionId: submission.questionId,
-      questionTitle: submission.questionTitle,
-      language: submission.language,
-      code: submission.code,
-      testsPassed: submission.testsPassed,
-      totalTests: submission.totalTests,
-      score: submission.score,
-      status: submission.status,
-      executionTimeMs: submission.executionTimeMs || 0,
-      compilerOutput: submission.compilerOutput || null,
-      testResults: submission.testResults || [],
-      submittedAt: String(submission.submittedAt),
-    });
+    await this.ensureInitialized();
+    await this.ensureContestInDatabase(submission.contestId);
+
+    try {
+      await db.insert(submissions).values({
+        id: submission.id,
+        contestId: submission.contestId,
+        participantId: submission.participantId,
+        participantName: submission.participantName,
+        questionId: submission.questionId,
+        questionTitle: submission.questionTitle,
+        language: submission.language,
+        code: submission.code,
+        testsPassed: submission.testsPassed,
+        totalTests: submission.totalTests,
+        score: submission.score,
+        status: submission.status,
+        executionTimeMs: submission.executionTimeMs || 0,
+        compilerOutput: submission.compilerOutput || null,
+        testResults: submission.testResults || [],
+        submittedAt: String(submission.submittedAt),
+      }).onConflictDoNothing();
+    } catch (subErr) {
+      console.warn('Notice saving submission to DB:', (subErr as any)?.message);
+    }
 
     // Recalculate participant score for this contest
     const contestSubs = await db
