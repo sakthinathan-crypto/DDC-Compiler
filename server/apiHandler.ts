@@ -7,10 +7,17 @@ export default async function handler(req: any, res: any) {
     cachedApp = await createApp();
   }
 
-  // Ensure req.url has /api prefix for Express routing on Vercel serverless
-  if (req.url && !req.url.startsWith('/api')) {
-    req.url = `/api${req.url.startsWith('/') ? '' : '/'}${req.url}`;
+  // Handle Vercel rewrite parameter or originalUrl
+  let url = req.url || '/';
+  if (req.query && req.query.match) {
+    const matchPath = Array.isArray(req.query.match) ? req.query.match.join('/') : req.query.match;
+    url = `/api/${matchPath}`;
   }
+
+  if (url && !url.startsWith('/api')) {
+    url = `/api${url.startsWith('/') ? '' : '/'}${url}`;
+  }
+  req.url = url;
 
   return cachedApp(req, res);
 }

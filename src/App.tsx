@@ -23,6 +23,7 @@ import { ResultPage } from './components/ResultPage';
 import { AdminDashboard } from './components/AdminDashboard';
 import { RulesModal } from './components/RulesModal';
 import { Bell, Sparkles } from 'lucide-react';
+import { DEFAULT_CONTESTS } from './lib/constants';
 
 export function App() {
   const [currentView, setCurrentView] = useState<
@@ -40,8 +41,8 @@ export function App() {
   >('landing');
 
   const [account, setAccount] = useState<ParticipantAccount | null>(null);
-  const [contests, setContests] = useState<Contest[]>([]);
-  const [selectedContest, setSelectedContest] = useState<Contest | null>(null);
+  const [contests, setContests] = useState<Contest[]>(DEFAULT_CONTESTS);
+  const [selectedContest, setSelectedContest] = useState<Contest | null>(DEFAULT_CONTESTS[0]);
 
   const [isRulesModalOpen, setIsRulesModalOpen] = useState<boolean>(false);
   const [liveAlert, setLiveAlert] = useState<string | null>(null);
@@ -74,9 +75,11 @@ export function App() {
 
     // Subscribe to real-time contest updates from Admin Center
     const unsubscribeContests = api.subscribeContests((updatedList) => {
-      setContests(updatedList);
-      setLiveAlert('Contest schedule or questions updated by Administrators.');
-      setTimeout(() => setLiveAlert(null), 5000);
+      if (updatedList && updatedList.length > 0) {
+        setContests(updatedList);
+        setLiveAlert('Contest schedule or questions updated by Administrators.');
+        setTimeout(() => setLiveAlert(null), 5000);
+      }
     });
 
     return () => {
@@ -88,13 +91,24 @@ export function App() {
   const loadContests = async () => {
     try {
       const list = await api.getContests();
-      setContests(list);
-      if (!selectedContest && list.length > 0) {
-        const flagship = list.find((c) => c.id === 'breach-the-bug-2026') || list[0];
+      if (list && list.length > 0) {
+        setContests(list);
+        const flagship =
+          list.find((c) => c.id === 'breach-the-bug-round-2') ||
+          list.find((c) => c.id === 'breach-the-bug-round-3') ||
+          list[0];
         setSelectedContest(flagship);
         loadContestQuestions(flagship.id);
+      } else {
+        setContests(DEFAULT_CONTESTS);
+        setSelectedContest(DEFAULT_CONTESTS[0]);
+        loadContestQuestions(DEFAULT_CONTESTS[0].id);
       }
-    } catch (_) {}
+    } catch (_) {
+      setContests(DEFAULT_CONTESTS);
+      setSelectedContest(DEFAULT_CONTESTS[0]);
+      loadContestQuestions(DEFAULT_CONTESTS[0].id);
+    }
   };
 
   const loadContestQuestions = async (contestId: string) => {

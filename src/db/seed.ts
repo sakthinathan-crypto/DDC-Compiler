@@ -178,12 +178,27 @@ export async function createTablesIfNotExist() {
     `ALTER TABLE questions ADD COLUMN IF NOT EXISTS created_at TIMESTAMP NOT NULL DEFAULT NOW()`,
     `ALTER TABLE questions ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP NOT NULL DEFAULT NOW()`,
 
+    `ALTER TABLE contest_questions ADD COLUMN IF NOT EXISTS display_order INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE contest_questions ADD COLUMN IF NOT EXISTS marks_override INTEGER`,
+
+    `ALTER TABLE test_cases ADD COLUMN IF NOT EXISTS order_index INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE test_cases ADD COLUMN IF NOT EXISTS is_sample BOOLEAN NOT NULL DEFAULT FALSE`,
+    `ALTER TABLE test_cases ADD COLUMN IF NOT EXISTS marks INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE test_cases ADD COLUMN IF NOT EXISTS explanation TEXT`,
+
     `ALTER TABLE contest_participants ADD COLUMN IF NOT EXISTS account_id TEXT`,
     `ALTER TABLE contest_participants ADD COLUMN IF NOT EXISTS college TEXT`,
     `ALTER TABLE contest_participants ADD COLUMN IF NOT EXISTS status VARCHAR(30) NOT NULL DEFAULT 'active'`,
     `ALTER TABLE contest_participants ADD COLUMN IF NOT EXISTS score INTEGER NOT NULL DEFAULT 0`,
     `ALTER TABLE contest_participants ADD COLUMN IF NOT EXISTS solved_count INTEGER NOT NULL DEFAULT 0`,
     `ALTER TABLE contest_participants ADD COLUMN IF NOT EXISTS completion_time_seconds INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE contest_participants ADD COLUMN IF NOT EXISTS start_time_epoch TEXT`,
+    `ALTER TABLE contest_participants ADD COLUMN IF NOT EXISTS end_time_epoch TEXT`,
+
+    `ALTER TABLE submissions ADD COLUMN IF NOT EXISTS execution_time_ms INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE submissions ADD COLUMN IF NOT EXISTS compiler_output TEXT`,
+    `ALTER TABLE submissions ADD COLUMN IF NOT EXISTS test_results JSONB NOT NULL DEFAULT '[]'::jsonb`,
+    `ALTER TABLE submissions ADD COLUMN IF NOT EXISTS submitted_at_epoch TEXT`,
 
     `CREATE INDEX IF NOT EXISTS idx_accounts_email ON accounts(email)`,
     `CREATE INDEX IF NOT EXISTS idx_accounts_reg_no ON accounts(register_number)`,
