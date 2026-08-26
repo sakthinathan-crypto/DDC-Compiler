@@ -2,7 +2,7 @@ import express, { Request, Response } from 'express';
 import * as path from 'path';
 import { dbStore } from './dbStore';
 import { seedDatabase } from '../src/db/seed';
-import { executeSingle, normalizeOutput } from './runner';
+import { executeSingle, normalizeOutput, compareOutputs } from './runner';
 import { RunResult, Submission, SubmissionStatus, SupportedLanguage } from '../src/types';
 
 let dbSeeded = false;
@@ -327,40 +327,152 @@ export async function createApp() {
       const q = questionId ? await dbStore.getContestFullQuestion(cId, questionId) : undefined;
       const timeLimit = q?.timeLimitMs || 2500;
 
-      let input = customInput !== undefined ? String(customInput) : '';
-      if (customInput === undefined && q && q.sampleTestCases && q.sampleTestCases.length > 0) {
-        input = q.sampleTestCases[0].input;
+      // Mode A: Run with custom input
+      if (customInput !== undefined) {
+        const rawResult = await executeSingle(
+          language as SupportedLanguage,
+          code,
+          String(customInput),
+          timeLimit
+        );
+
+        const isSuccess = rawResult.status === 'Accepted';
+        const displayOutput = rawResult.stdout || (rawResult.stderr ? rawResult.stderr : '');
+
+        const result: RunResult = {
+          status: rawResult.status,
+          output: displayOutput,
+          error: rawResult.stderr || undefined,
+          compilerOutput: rawResult.status === 'Compilation Error' ? rawResult.stderr : undefined,
+          executionTimeMs: rawResult.executionTimeMs,
+          testResults: [
+            {
+              testNumber: 1,
+              isSample: true,
+              passed: isSuccess,
+              input: String(customInput),
+              expected: '',
+              actual: displayOutput,
+              error: rawResult.stderr || undefined,
+              executionTimeMs: rawResult.executionTimeMs,
+            },
+          ],
+          passedCount: isSuccess ? 1 : 0,
+          totalCount: 1,
+        };
+
+        return res.json(result);
       }
 
-      const rawResult = await executeSingle(
-        language as SupportedLanguage,
-        code,
-        input,
-        timeLimit
-      );
+      // Mode B: Run all sample test cases
+      const sampleTests = q?.sampleTestCases && q.sampleTestCases.length > 0
+        ? q.sampleTestCases
+        : [{ id: 'default-sample', input: '', expectedOutput: '', isSample: true, marks: 0 }];
 
-      const testResults = [
-        {
-          testNumber: 1,
-          isSample: true,
-          passed: rawResult.status === 'Accepted',
-          input,
-          expected: q?.sampleTestCases?.[0]?.expectedOutput || '',
-          actual: normalizeOutput(rawResult.stdout),
-          error: rawResult.stderr || undefined,
-          executionTimeMs: rawResult.executionTimeMs,
-        },
-      ];
+      const testResults: any[] = [];
+      let passedCount = 0;
+      let overallStatus: SubmissionStatus = 'Accepted';
+      let compilerOutput: string | undefined = undefined;
+      let firstOutput = '';
+
+      for (let i = 0; i < sampleTests.length; i++) {
+        const tc = sampleTests[i];
+        const rawResult = await executeSingle(
+          language as SupportedLanguage,
+          code,
+          tc.input,
+          timeLimit
+        );
+
+        if (i === 0) {
+          firstOutput = rawResult.stdout;
+        }
+
+        if (rawResult.status === 'Compilation Error') {
+          overallStatus = 'Compilation Error';
+          compilerOutput = rawResult.stderr;
+          testResults.push({
+            testNumber: i + 1,
+            isSample: true,
+            passed: false,
+            input: tc.input,
+            expected: tc.expectedOutput,
+            actual: '',
+            error: rawResult.stderr,
+            executionTimeMs: rawResult.executionTimeMs,
+          });
+          break; // Stop further evaluation on compiler error
+        }
+
+        if (rawResult.status === 'Time Limit Exceeded') {
+          if (overallStatus === 'Accepted') overallStatus = 'Time Limit Exceeded';
+          testResults.push({
+            testNumber: i + 1,
+            isSample: true,
+            passed: false,
+            input: tc.input,
+            expected: tc.expectedOutput,
+            actual: rawResult.stdout || '',
+            error: 'Time Limit Exceeded',
+            executionTimeMs: rawResult.executionTimeMs,
+          });
+          continue;
+        }
+
+        if (rawResult.status === 'Runtime Error') {
+          if (overallStatus === 'Accepted') overallStatus = 'Runtime Error';
+          testResults.push({
+            testNumber: i + 1,
+            isSample: true,
+            passed: false,
+            input: tc.input,
+            expected: tc.expectedOutput,
+            actual: rawResult.stdout || '',
+            error: rawResult.stderr || 'Runtime Error',
+            executionTimeMs: rawResult.executionTimeMs,
+          });
+          continue;
+        }
+
+        const isMatch = tc.expectedOutput
+          ? compareOutputs(rawResult.stdout, tc.expectedOutput)
+          : rawResult.status === 'Accepted';
+
+        if (isMatch) {
+          passedCount++;
+          testResults.push({
+            testNumber: i + 1,
+            isSample: true,
+            passed: true,
+            input: tc.input,
+            expected: tc.expectedOutput,
+            actual: normalizeOutput(rawResult.stdout),
+            executionTimeMs: rawResult.executionTimeMs,
+          });
+        } else {
+          if (overallStatus === 'Accepted') overallStatus = 'Wrong Answer';
+          testResults.push({
+            testNumber: i + 1,
+            isSample: true,
+            passed: false,
+            input: tc.input,
+            expected: tc.expectedOutput,
+            actual: normalizeOutput(rawResult.stdout),
+            error: rawResult.stderr || undefined,
+            executionTimeMs: rawResult.executionTimeMs,
+          });
+        }
+      }
 
       const result: RunResult = {
-        status: rawResult.status,
-        output: normalizeOutput(rawResult.stdout),
-        error: rawResult.stderr || undefined,
-        compilerOutput: rawResult.status === 'Compilation Error' ? rawResult.stderr : undefined,
-        executionTimeMs: rawResult.executionTimeMs,
+        status: overallStatus,
+        output: firstOutput || (testResults[0]?.actual ?? ''),
+        error: compilerOutput || (overallStatus !== 'Accepted' ? testResults.find((t) => t.error)?.error : undefined),
+        compilerOutput,
+        executionTimeMs: Math.max(...testResults.map((t) => t.executionTimeMs || 0), 0),
         testResults,
-        passedCount: rawResult.status === 'Accepted' ? 1 : 0,
-        totalCount: 1,
+        passedCount,
+        totalCount: sampleTests.length,
       };
 
       res.json(result);
@@ -461,7 +573,7 @@ export async function createApp() {
 
         const normalizedActual = normalizeOutput(execRes.stdout);
         const normalizedExpected = normalizeOutput(tc.expectedOutput);
-        const isMatch = normalizedActual === normalizedExpected;
+        const isMatch = compareOutputs(execRes.stdout, tc.expectedOutput);
 
         if (isMatch) {
           testsPassed++;

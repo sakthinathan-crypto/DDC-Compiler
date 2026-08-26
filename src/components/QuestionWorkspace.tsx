@@ -509,7 +509,9 @@ export const QuestionWorkspace: React.FC<QuestionWorkspaceProps> = ({
                   <div className="flex flex-col space-y-1">
                     <label className="text-[11px] text-slate-400 font-bold">Execution Output:</label>
                     <pre className="flex-1 min-h-[100px] p-2 bg-black/60 border border-slate-800 rounded font-mono text-xs text-sky-300 overflow-y-auto whitespace-pre-wrap">
-                      {runResult?.output || (runResult?.error ? runResult.error : 'Click "Run Code" to test against custom input.')}
+                      {runResult
+                        ? (runResult.output || (runResult.error ? runResult.error : '<Program completed with no output>'))
+                        : 'Click "Run Code" to test against custom input.'}
                     </pre>
                   </div>
                 </div>
@@ -575,7 +577,7 @@ export const QuestionWorkspace: React.FC<QuestionWorkspaceProps> = ({
                     <div className="space-y-2.5">
                       {runResult.compilerOutput && (
                         <div className="p-2.5 rounded bg-rose-950/30 border border-rose-500/30 text-rose-300 whitespace-pre-wrap">
-                          <div className="font-bold mb-1">Compiler Error / Warning:</div>
+                          <div className="font-bold mb-1">Compiler Error:</div>
                           {runResult.compilerOutput}
                         </div>
                       )}
@@ -600,7 +602,7 @@ export const QuestionWorkspace: React.FC<QuestionWorkspaceProps> = ({
                             <div>
                               <span className="text-slate-500">Your Output:</span>
                               <pre className="p-1.5 rounded bg-black/60 text-slate-200 overflow-x-auto whitespace-pre-wrap">
-                                {tr.actual || tr.error || '<No output>'}
+                                {tr.actual !== undefined && tr.actual !== '' ? tr.actual : (tr.error ? tr.error : '<No output>')}
                               </pre>
                             </div>
                             <div>
@@ -610,6 +612,12 @@ export const QuestionWorkspace: React.FC<QuestionWorkspaceProps> = ({
                               </pre>
                             </div>
                           </div>
+
+                          {tr.error && tr.actual && (
+                            <div className="text-[11px] text-rose-400 bg-rose-950/20 p-1.5 rounded border border-rose-900/40 whitespace-pre-wrap">
+                              <span className="font-bold">Error / Stderr:</span> {tr.error}
+                            </div>
+                          )}
                         </div>
                       ))}
                     </div>
