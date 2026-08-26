@@ -63,9 +63,9 @@ export const Header: React.FC<HeaderProps> = ({
           className="flex items-center gap-3 cursor-pointer group select-none"
           onClick={() => onNavigate(account ? 'dashboard' : 'landing')}
         >
-          <div className="relative w-10 h-10 sm:w-11 sm:h-11 flex-shrink-0 bg-black/60 rounded-xl p-1 border border-amber-500/30 group-hover:border-amber-500/70 transition-colors shadow-md shadow-amber-950/20">
+          <div className="relative w-10 h-10 sm:w-11 sm:h-11 flex-shrink-0 bg-black/60 rounded-xl p-1 border border-amber-500/30 group-hover:border-amber-500/70 transition-colors shadow-md shadow-amber-950/20 flex items-center justify-center overflow-hidden">
             <img
-              src="/brand/club-logo.svg"
+              src="/brand/club-logo.png"
               alt="Designers Domain Club Logo"
               className="w-full h-full object-contain"
               referrerPolicy="no-referrer"

@@ -106,9 +106,9 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
     <div id="leaderboard-view" className="w-full max-w-6xl mx-auto py-6 sm:py-10 px-4 space-y-8">
       {/* Top Banner with Official Club Logo */}
       <div className="flex flex-col items-center text-center space-y-3">
-        <div className="w-16 h-16 rounded-2xl bg-black/60 p-1.5 border border-amber-500/30 shadow-2xl flex items-center justify-center">
+        <div className="w-16 h-16 rounded-2xl bg-black/60 p-1.5 border border-amber-500/30 shadow-2xl flex items-center justify-center overflow-hidden">
           <img
-            src="/brand/club-logo.svg"
+            src="/brand/club-logo.png"
             alt="Designers Domain Club"
             className="w-full h-full object-contain"
             referrerPolicy="no-referrer"

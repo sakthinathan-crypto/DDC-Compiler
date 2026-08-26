@@ -2,5 +2,7 @@
   "name": "Designers Domain Club Compiler",
   "description": "Professional multi-contest coding competition and compiler platform for Designers Domain Club, featuring Question Bank, Contest Management, live sandboxed execution, and real-time leaderboards. Designed by Aegis.",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }

@@ -54,9 +54,9 @@ export const ResultPage: React.FC<ResultPageProps> = ({
     <div id="result-page" className="w-full max-w-4xl mx-auto py-8 sm:py-12 px-4 space-y-8 text-center">
       {/* Top Club Crest & Victory Title */}
       <div className="flex flex-col items-center gap-4">
-        <div className="w-20 h-20 rounded-2xl bg-black/60 p-2 border border-amber-500/30 shadow-2xl flex items-center justify-center">
+        <div className="w-20 h-20 rounded-2xl bg-black/60 p-2 border border-amber-500/30 shadow-2xl flex items-center justify-center overflow-hidden">
           <img
-            src="/brand/club-logo.svg"
+            src="/brand/club-logo.png"
             alt="Designers Domain Club Logo"
             className="w-full h-full object-contain"
             referrerPolicy="no-referrer"

@@ -224,9 +224,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBack }) => {
       <div className="w-full max-w-md mx-auto py-16 px-4">
         <div className="bg-[#0e111a] border border-slate-800 rounded-2xl p-6 sm:p-8 shadow-2xl space-y-6">
           <div className="flex flex-col items-center gap-3 text-center">
-            <div className="w-14 h-14 rounded-2xl bg-black/60 p-1 border border-amber-500/30 flex items-center justify-center">
+            <div className="w-14 h-14 rounded-2xl bg-black/60 p-1 border border-amber-500/30 flex items-center justify-center overflow-hidden">
               <img
-                src="/brand/club-logo.svg"
+                src="/brand/club-logo.png"
                 alt="Designers Domain Club"
                 className="w-full h-full object-contain"
                 referrerPolicy="no-referrer"
@@ -285,9 +285,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBack }) => {
       {/* Admin Header with Official Club Logo */}
       <div className="bg-[#0e111a] border border-slate-800 rounded-2xl p-5 shadow-xl flex flex-col sm:flex-row items-center justify-between gap-4">
         <div className="flex items-center gap-3.5">
-          <div className="w-12 h-12 rounded-xl bg-black/60 p-1 border border-amber-500/30 flex items-center justify-center">
+          <div className="w-12 h-12 rounded-xl bg-black/60 p-1 border border-amber-500/30 flex items-center justify-center overflow-hidden">
             <img
-              src="/brand/club-logo.svg"
+              src="/brand/club-logo.png"
               alt="Club Logo"
               className="w-full h-full object-contain"
               referrerPolicy="no-referrer"

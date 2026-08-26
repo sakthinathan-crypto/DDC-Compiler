@@ -70,9 +70,9 @@ export const LandingPage: React.FC<LandingPageProps> = ({
         <div className="flex flex-col items-center text-center space-y-4">
           <div className="relative group">
             <div className="absolute -inset-4 bg-amber-500/10 rounded-full blur-xl group-hover:bg-amber-500/20 transition-all" />
-            <div className="relative w-24 h-24 sm:w-28 sm:h-28 bg-black/60 rounded-2xl p-2 border border-amber-500/30 shadow-2xl flex items-center justify-center backdrop-blur-md">
+            <div className="relative w-24 h-24 sm:w-28 sm:h-28 bg-black/60 rounded-2xl p-2 border border-amber-500/30 shadow-2xl flex items-center justify-center backdrop-blur-md overflow-hidden">
               <img
-                src="/brand/club-logo.svg"
+                src="/brand/club-logo.png"
                 alt="Designers Domain Club Logo"
                 className="w-full h-full object-contain"
                 referrerPolicy="no-referrer"

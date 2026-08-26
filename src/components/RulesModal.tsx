@@ -28,9 +28,9 @@ export const RulesModal: React.FC<RulesModalProps> = ({ isOpen, contest, onClose
 
         {/* Header with Club Logo */}
         <div className="flex items-center gap-3.5 mb-6 pb-4 border-b border-slate-800">
-          <div className="w-12 h-12 rounded-xl bg-black/60 p-1 border border-amber-500/30 flex items-center justify-center flex-shrink-0">
+          <div className="w-12 h-12 rounded-xl bg-black/60 p-1 border border-amber-500/30 flex items-center justify-center flex-shrink-0 overflow-hidden">
             <img
-              src="/brand/club-logo.svg"
+              src="/brand/club-logo.png"
               alt="Designers Domain Club"
               className="w-full h-full object-contain"
               referrerPolicy="no-referrer"

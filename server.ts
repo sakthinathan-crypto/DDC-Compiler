@@ -1,13 +1,21 @@
 import express, { Request, Response } from 'express';
 import * as path from 'path';
 import { createServer as createViteServer } from 'vite';
-import { store } from './server/store';
+import { dbStore } from './server/dbStore';
+import { seedDatabase } from './src/db/seed';
 import { executeSingle, normalizeOutput } from './server/runner';
 import { RunResult, Submission, SubmissionStatus, SupportedLanguage } from './src/types';
 
 async function startServer() {
   const app = express();
   const PORT = 3000;
+
+  // Run database sync / seed on startup
+  try {
+    await seedDatabase();
+  } catch (seedErr) {
+    console.error('Error during database initialization/seed:', seedErr);
+  }
 
   app.use(express.json({ limit: '2mb' }));
   app.use(express.urlencoded({ extended: true }));
@@ -18,7 +26,7 @@ async function startServer() {
 
   // Health check
   app.get('/api/health', (req: Request, res: Response) => {
-    res.json({ status: 'ok', time: Date.now() });
+    res.json({ status: 'ok', time: Date.now(), database: 'PostgreSQL' });
   });
 
   // Server-Sent Events (SSE) for Real-time Leaderboards & Live Submissions Stream
@@ -31,7 +39,7 @@ async function startServer() {
     // Initial handshake
     res.write(`event: connected\ndata: ${JSON.stringify({ message: 'Connected to DDC Compiler stream' })}\n\n`);
 
-    const unsubscribe = store.subscribeSSE((chunk) => {
+    const unsubscribe = dbStore.subscribeSSE((chunk) => {
       res.write(chunk);
     });
 
@@ -41,59 +49,92 @@ async function startServer() {
   });
 
   // ================= PUBLIC CONTEST DISCOVERY ================= //
-  app.get('/api/contests', (req: Request, res: Response) => {
-    res.json(store.getPublicContests());
-  });
-
-  app.get('/api/contests/:id', (req: Request, res: Response) => {
-    const contest = store.getContest(req.params.id);
-    if (!contest) {
-      return res.status(404).json({ error: 'Contest not found' });
+  app.get('/api/contests', async (req: Request, res: Response) => {
+    try {
+      const list = await dbStore.getPublicContests();
+      res.json(list);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to fetch contests' });
     }
-    res.json(contest);
   });
 
-  app.get('/api/contests/:id/questions', (req: Request, res: Response) => {
-    const qs = store.getContestPublicQuestions(req.params.id);
-    res.json(qs);
-  });
-
-  app.get('/api/contests/:contestId/questions/:qId', (req: Request, res: Response) => {
-    const qs = store.getContestPublicQuestions(req.params.contestId);
-    const q = qs.find((item) => item.id === req.params.qId);
-    if (!q) {
-      return res.status(404).json({ error: 'Question not found in this contest' });
+  app.get('/api/contests/:id', async (req: Request, res: Response) => {
+    try {
+      const contest = await dbStore.getContest(req.params.id);
+      if (!contest) {
+        return res.status(404).json({ error: 'Contest not found' });
+      }
+      res.json(contest);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to fetch contest' });
     }
-    res.json(q);
+  });
+
+  app.get('/api/contests/:id/questions', async (req: Request, res: Response) => {
+    try {
+      const qs = await dbStore.getContestPublicQuestions(req.params.id);
+      res.json(qs);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to fetch contest questions' });
+    }
+  });
+
+  app.get('/api/contests/:contestId/questions/:qId', async (req: Request, res: Response) => {
+    try {
+      const qs = await dbStore.getContestPublicQuestions(req.params.contestId);
+      const q = qs.find((item) => item.id === req.params.qId);
+      if (!q) {
+        return res.status(404).json({ error: 'Question not found in this contest' });
+      }
+      res.json(q);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to fetch question' });
+    }
   });
 
   // Legacy route for default contest (Breach the Bug)
-  app.get('/api/config', (req: Request, res: Response) => {
-    const contest = store.getContest('breach-the-bug-2026') || store.getPublicContests()[0];
-    res.json(contest);
-  });
-
-  app.get('/api/questions', (req: Request, res: Response) => {
-    res.json(store.getContestPublicQuestions('breach-the-bug-2026'));
-  });
-
-  app.get('/api/questions/:id', (req: Request, res: Response) => {
-    const q = store.getContestPublicQuestions('breach-the-bug-2026').find((item) => item.id === req.params.id);
-    if (!q) {
-      return res.status(404).json({ error: 'Question not found' });
+  app.get('/api/config', async (req: Request, res: Response) => {
+    try {
+      const contest =
+        (await dbStore.getContest('breach-the-bug-round-2')) ||
+        (await dbStore.getPublicContests())[0];
+      res.json(contest);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
-    res.json(q);
+  });
+
+  app.get('/api/questions', async (req: Request, res: Response) => {
+    try {
+      const qs = await dbStore.getContestPublicQuestions('breach-the-bug-round-2');
+      res.json(qs);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/api/questions/:id', async (req: Request, res: Response) => {
+    try {
+      const qs = await dbStore.getContestPublicQuestions('breach-the-bug-round-2');
+      const q = qs.find((item) => item.id === req.params.id);
+      if (!q) {
+        return res.status(404).json({ error: 'Question not found' });
+      }
+      res.json(q);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   // ================= PARTICIPANT AUTHENTICATION & PROFILES ================= //
-  app.post('/api/auth/register', (req: Request, res: Response) => {
+  app.post('/api/auth/register', async (req: Request, res: Response) => {
     try {
       const { name, registerNumber, mobile, email, department, year, college, password } = req.body;
       if (!name || !registerNumber || !mobile || !email || !department || !year || !college || !password) {
         return res.status(400).json({ error: 'All fields are required to create an account.' });
       }
 
-      const account = store.registerAccount({
+      const account = await dbStore.registerAccount({
         name,
         registerNumber,
         mobile,
@@ -114,14 +155,14 @@ async function startServer() {
     }
   });
 
-  app.post('/api/auth/login', (req: Request, res: Response) => {
+  app.post('/api/auth/login', async (req: Request, res: Response) => {
     try {
       const { identifier, password } = req.body;
       if (!identifier || !password) {
         return res.status(400).json({ error: 'Email / Participant ID and password are required.' });
       }
 
-      const account = store.loginAccount(identifier, password);
+      const account = await dbStore.loginAccount(identifier, password);
       res.json({
         success: true,
         account,
@@ -144,19 +185,23 @@ async function startServer() {
     }
   });
 
-  app.get('/api/me/profile', (req: Request, res: Response) => {
-    const participantId = (req.headers['x-participant-id'] as string) || (req.query.participantId as string);
-    if (!participantId) {
-      return res.status(401).json({ error: 'Unauthorized: missing participant identification' });
+  app.get('/api/me/profile', async (req: Request, res: Response) => {
+    try {
+      const participantId = (req.headers['x-participant-id'] as string) || (req.query.participantId as string);
+      if (!participantId) {
+        return res.status(401).json({ error: 'Unauthorized: missing participant identification' });
+      }
+      const account = await dbStore.getAccountByParticipantId(participantId);
+      if (!account) {
+        return res.status(404).json({ error: 'Participant profile not found' });
+      }
+      res.json(account);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
-    const account = store.getAccountByParticipantId(participantId);
-    if (!account) {
-      return res.status(404).json({ error: 'Participant profile not found' });
-    }
-    res.json(account);
   });
 
-  app.put('/api/me/profile', (req: Request, res: Response) => {
+  app.put('/api/me/profile', async (req: Request, res: Response) => {
     try {
       const participantId =
         (req.headers['x-participant-id'] as string) || req.body.participantId || (req.query.participantId as string);
@@ -164,7 +209,7 @@ async function startServer() {
         return res.status(401).json({ error: 'Unauthorized' });
       }
       const { name, mobile, department, year, college } = req.body;
-      const updated = store.updateAccount(participantId, {
+      const updated = await dbStore.updateAccount(participantId, {
         name,
         mobile,
         department,
@@ -177,23 +222,27 @@ async function startServer() {
     }
   });
 
-  app.get('/api/me/results', (req: Request, res: Response) => {
-    const participantId = (req.headers['x-participant-id'] as string) || (req.query.participantId as string);
-    if (!participantId) {
-      return res.status(400).json({ error: 'Missing participantId' });
+  app.get('/api/me/results', async (req: Request, res: Response) => {
+    try {
+      const participantId = (req.headers['x-participant-id'] as string) || (req.query.participantId as string);
+      if (!participantId) {
+        return res.status(400).json({ error: 'Missing participantId' });
+      }
+      const results = await dbStore.getParticipantResults(participantId);
+      res.json(results);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
-    const results = store.getParticipantResults(participantId);
-    res.json(results);
   });
 
-  app.post('/api/contests/:contestId/join', (req: Request, res: Response) => {
+  app.post('/api/contests/:contestId/join', async (req: Request, res: Response) => {
     try {
       const { contestId } = req.params;
       const participantId = (req.headers['x-participant-id'] as string) || req.body.participantId;
       if (!participantId) {
         return res.status(400).json({ error: 'Participant ID is required to join' });
       }
-      const joinResult = store.joinContestWithAccount(contestId, participantId);
+      const joinResult = await dbStore.joinContestWithAccount(contestId, participantId);
       res.json(joinResult);
     } catch (err: any) {
       res.status(400).json({ error: err.message || 'Could not enter contest' });
@@ -201,7 +250,7 @@ async function startServer() {
   });
 
   // ================= PARTICIPANT REGISTRATION & SESSIONS ================= //
-  app.post('/api/contests/:contestId/participants/register', (req: Request, res: Response) => {
+  app.post('/api/contests/:contestId/participants/register', async (req: Request, res: Response) => {
     try {
       const { contestId } = req.params;
       const { name, registerNumber, department, year, email, participantId } = req.body;
@@ -209,7 +258,7 @@ async function startServer() {
         return res.status(400).json({ error: 'All fields are required.' });
       }
 
-      const result = store.registerParticipant(contestId, {
+      const result = await dbStore.registerParticipant(contestId, {
         name,
         registerNumber,
         department,
@@ -218,7 +267,7 @@ async function startServer() {
         participantId,
       });
 
-      const timeRemaining = store.getParticipantTimeRemainingSeconds(contestId, result.participant.participantId);
+      const timeRemaining = await dbStore.getParticipantTimeRemainingSeconds(contestId, result.participant.participantId);
 
       res.json({
         participant: result.participant,
@@ -230,24 +279,28 @@ async function startServer() {
     }
   });
 
-  app.get('/api/contests/:contestId/participants/:pId', (req: Request, res: Response) => {
-    const { contestId, pId } = req.params;
-    const participant = store.getParticipant(contestId, pId);
-    if (!participant) {
-      return res.status(404).json({ error: 'Participant not found in this contest' });
+  app.get('/api/contests/:contestId/participants/:pId', async (req: Request, res: Response) => {
+    try {
+      const { contestId, pId } = req.params;
+      const participant = await dbStore.getParticipant(contestId, pId);
+      if (!participant) {
+        return res.status(404).json({ error: 'Participant not found in this contest' });
+      }
+      const timeRemaining = await dbStore.getParticipantTimeRemainingSeconds(contestId, participant.participantId);
+      res.json({
+        participant,
+        timeRemainingSeconds: timeRemaining,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
-    const timeRemaining = store.getParticipantTimeRemainingSeconds(contestId, participant.participantId);
-    res.json({
-      participant,
-      timeRemainingSeconds: timeRemaining,
-    });
   });
 
   // Legacy single-contest participant registration
-  app.post('/api/participants/register', (req: Request, res: Response) => {
+  app.post('/api/participants/register', async (req: Request, res: Response) => {
     try {
       const { name, registerNumber, department, year, email, participantId } = req.body;
-      const result = store.registerParticipant('breach-the-bug-2026', {
+      const result = await dbStore.registerParticipant('breach-the-bug-round-2', {
         name,
         registerNumber,
         department,
@@ -255,8 +308,8 @@ async function startServer() {
         email,
         participantId,
       });
-      const timeRemaining = store.getParticipantTimeRemainingSeconds(
-        'breach-the-bug-2026',
+      const timeRemaining = await dbStore.getParticipantTimeRemainingSeconds(
+        'breach-the-bug-round-2',
         result.participant.participantId
       );
       res.json({
@@ -269,16 +322,23 @@ async function startServer() {
     }
   });
 
-  app.get('/api/participants/:id', (req: Request, res: Response) => {
-    const participant = store.getParticipant('breach-the-bug-2026', req.params.id);
-    if (!participant) {
-      return res.status(404).json({ error: 'Participant not found' });
+  app.get('/api/participants/:id', async (req: Request, res: Response) => {
+    try {
+      const participant = await dbStore.getParticipant('breach-the-bug-round-2', req.params.id);
+      if (!participant) {
+        return res.status(404).json({ error: 'Participant not found' });
+      }
+      const timeRemaining = await dbStore.getParticipantTimeRemainingSeconds(
+        'breach-the-bug-round-2',
+        participant.participantId
+      );
+      res.json({
+        participant,
+        timeRemainingSeconds: timeRemaining,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
-    const timeRemaining = store.getParticipantTimeRemainingSeconds('breach-the-bug-2026', participant.participantId);
-    res.json({
-      participant,
-      timeRemainingSeconds: timeRemaining,
-    });
   });
 
   // ================= CODE RUNNER (Sample Tests & Custom Input) ================= //
@@ -326,8 +386,11 @@ async function startServer() {
         return res.status(400).json({ error: 'Question ID is required for sample evaluation' });
       }
 
-      const activeContestId = contestId || 'breach-the-bug-2026';
-      const fullQ = store.getContestFullQuestion(activeContestId, questionId) || store.getBankQuestion(questionId);
+      const activeContestId = contestId || 'breach-the-bug-round-2';
+      const fullQ =
+        (await dbStore.getContestFullQuestion(activeContestId, questionId)) ||
+        (await dbStore.getBankQuestion(questionId));
+
       if (!fullQ) {
         return res.status(404).json({ error: 'Question not found' });
       }
@@ -417,13 +480,13 @@ async function startServer() {
         return res.status(400).json({ error: 'Missing required submission fields' });
       }
 
-      const participant = store.getParticipant(contestId, participantId);
+      const participant = await dbStore.getParticipant(contestId, participantId);
       if (!participant) {
         return res.status(404).json({ error: 'Participant not found in this contest' });
       }
 
       // Timer Check
-      const timeRemaining = store.getParticipantTimeRemainingSeconds(contestId, participantId);
+      const timeRemaining = await dbStore.getParticipantTimeRemainingSeconds(contestId, participantId);
       if (timeRemaining <= 0) {
         return res.status(403).json({
           error: 'Contest timer has expired! No further submissions are allowed.',
@@ -431,7 +494,7 @@ async function startServer() {
         });
       }
 
-      const fullQ = store.getContestFullQuestion(contestId, questionId);
+      const fullQ = await dbStore.getContestFullQuestion(contestId, questionId);
       if (!fullQ) {
         return res.status(404).json({ error: 'Question not found in this contest' });
       }
@@ -511,14 +574,14 @@ async function startServer() {
         testResults,
       };
 
-      store.addSubmission(submission);
+      await dbStore.addSubmission(submission);
 
-      const updatedParticipant = store.getParticipant(contestId, participantId);
+      const updatedParticipant = await dbStore.getParticipant(contestId, participantId);
 
       res.json({
         submission,
         participant: updatedParticipant,
-        timeRemainingSeconds: store.getParticipantTimeRemainingSeconds(contestId, participantId),
+        timeRemainingSeconds: await dbStore.getParticipantTimeRemainingSeconds(contestId, participantId),
       });
     } catch (err: any) {
       res.status(500).json({ error: err.message || 'Submission failed' });
@@ -527,13 +590,13 @@ async function startServer() {
 
   // Legacy submit fallback
   app.post('/api/submit', async (req: Request, res: Response) => {
-    req.params.contestId = 'breach-the-bug-2026';
-    const contestId = 'breach-the-bug-2026';
+    req.params.contestId = 'breach-the-bug-round-2';
+    const contestId = 'breach-the-bug-round-2';
     const { participantId, questionId, language, code } = req.body;
-    const participant = store.getParticipant(contestId, participantId);
+    const participant = await dbStore.getParticipant(contestId, participantId);
     if (!participant) return res.status(404).json({ error: 'Participant not found' });
 
-    const fullQ = store.getContestFullQuestion(contestId, questionId);
+    const fullQ = await dbStore.getContestFullQuestion(contestId, questionId);
     if (!fullQ) return res.status(404).json({ error: 'Question not found' });
 
     const allTests = [...(fullQ.sampleTestCases || []), ...(fullQ.hiddenTestCases || [])];
@@ -602,212 +665,304 @@ async function startServer() {
       testResults,
     };
 
-    store.addSubmission(submission);
+    await dbStore.addSubmission(submission);
     res.json({
       submission,
-      participant: store.getParticipant(contestId, participantId),
-      timeRemainingSeconds: store.getParticipantTimeRemainingSeconds(contestId, participantId),
+      participant: await dbStore.getParticipant(contestId, participantId),
+      timeRemainingSeconds: await dbStore.getParticipantTimeRemainingSeconds(contestId, participantId),
     });
   });
 
   // ================= LEADERBOARD & SUBMISSIONS ================= //
-  app.get('/api/contests/:contestId/leaderboard', (req: Request, res: Response) => {
-    res.json(store.getContestLeaderboard(req.params.contestId));
+  app.get('/api/contests/:contestId/leaderboard', async (req: Request, res: Response) => {
+    try {
+      const lb = await dbStore.getContestLeaderboard(req.params.contestId);
+      res.json(lb);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
-  app.get('/api/contests/:contestId/submissions', (req: Request, res: Response) => {
-    const { contestId } = req.params;
-    const { participantId, questionId } = req.query as {
-      participantId?: string;
-      questionId?: string;
-    };
-    res.json(store.getSubmissions(contestId, participantId, questionId));
+  app.get('/api/contests/:contestId/submissions', async (req: Request, res: Response) => {
+    try {
+      const { contestId } = req.params;
+      const { participantId, questionId } = req.query as {
+        participantId?: string;
+        questionId?: string;
+      };
+      const list = await dbStore.getSubmissions(contestId, participantId, questionId);
+      res.json(list);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   // Legacy leaderboard
-  app.get('/api/leaderboard', (req: Request, res: Response) => {
-    res.json(store.getContestLeaderboard('breach-the-bug-2026'));
+  app.get('/api/leaderboard', async (req: Request, res: Response) => {
+    try {
+      const lb = await dbStore.getContestLeaderboard('breach-the-bug-round-2');
+      res.json(lb);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
-  app.get('/api/submissions', (req: Request, res: Response) => {
-    const { participantId, questionId, contestId } = req.query as {
-      participantId?: string;
-      questionId?: string;
-      contestId?: string;
-    };
-    res.json(store.getSubmissions(contestId, participantId, questionId));
+  app.get('/api/submissions', async (req: Request, res: Response) => {
+    try {
+      const { participantId, questionId, contestId } = req.query as {
+        participantId?: string;
+        questionId?: string;
+        contestId?: string;
+      };
+      const list = await dbStore.getSubmissions(contestId, participantId, questionId);
+      res.json(list);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   // ================= ADMIN MANAGEMENT APIS ================= //
-  app.post('/api/admin/auth', (req: Request, res: Response) => {
-    const { password } = req.body;
-    const validPassword = process.env.ADMIN_PASSWORD || 'aegis2026';
-    if (password === validPassword || password === 'admin' || password === 'aegis2026') {
-      return res.json({ success: true, token: 'ddc-admin-token-' + Date.now() });
+  app.post('/api/admin/auth', async (req: Request, res: Response) => {
+    try {
+      const { password } = req.body;
+      const isValid = await dbStore.verifyAdminPassword(password || '');
+      if (isValid) {
+        return res.json({ success: true, token: 'ddc-admin-token-' + Date.now() });
+      }
+      res.status(401).json({ error: 'Invalid admin passcode' });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
-    res.status(401).json({ error: 'Invalid admin passcode' });
   });
 
   // Contests Admin
-  app.get('/api/admin/contests', (req: Request, res: Response) => {
-    res.json(store.getAllContests());
-  });
-
-  app.post('/api/admin/contests', (req: Request, res: Response) => {
-    const contestData = req.body;
-    if (!contestData.id || !contestData.title) {
-      return res.status(400).json({ error: 'Contest ID and Title are required' });
+  app.get('/api/admin/contests', async (req: Request, res: Response) => {
+    try {
+      const list = await dbStore.getAllContests();
+      res.json(list);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
-    const saved = store.saveContest(contestData);
-    res.json({ success: true, contest: saved });
   });
 
-  app.delete('/api/admin/contests/:id', (req: Request, res: Response) => {
-    const success = store.deleteContest(req.params.id);
-    res.json({ success });
+  app.post('/api/admin/contests', async (req: Request, res: Response) => {
+    try {
+      const contestData = req.body;
+      if (!contestData.id || !contestData.title) {
+        return res.status(400).json({ error: 'Contest ID and Title are required' });
+      }
+      const saved = await dbStore.saveContest(contestData);
+      res.json({ success: true, contest: saved });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
-  app.post('/api/admin/contests/:id/duplicate', (req: Request, res: Response) => {
-    const copy = store.duplicateContest(req.params.id);
-    if (!copy) return res.status(404).json({ error: 'Contest not found' });
-    res.json({ success: true, contest: copy });
+  app.delete('/api/admin/contests/:id', async (req: Request, res: Response) => {
+    try {
+      const success = await dbStore.deleteContest(req.params.id);
+      res.json({ success });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
-  app.post('/api/admin/contests/:id/publish', (req: Request, res: Response) => {
-    const published = store.publishContest(req.params.id);
-    if (!published) return res.status(404).json({ error: 'Contest not found' });
-    res.json({ success: true, contest: published });
+  app.post('/api/admin/contests/:id/duplicate', async (req: Request, res: Response) => {
+    try {
+      const copy = await dbStore.duplicateContest(req.params.id);
+      if (!copy) return res.status(404).json({ error: 'Contest not found' });
+      res.json({ success: true, contest: copy });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/admin/contests/:id/publish', async (req: Request, res: Response) => {
+    try {
+      const published = await dbStore.publishContest(req.params.id);
+      if (!published) return res.status(404).json({ error: 'Contest not found' });
+      res.json({ success: true, contest: published });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   // Question Bank Admin
-  app.get('/api/admin/question-bank', (req: Request, res: Response) => {
-    res.json(store.getAllBankQuestions());
-  });
-
-  app.post('/api/admin/question-bank', (req: Request, res: Response) => {
-    const qData = req.body;
-    if (!qData.id || !qData.title || !qData.starterCode) {
-      return res.status(400).json({ error: 'Question ID, Title and Starter Code are required' });
+  app.get('/api/admin/question-bank', async (req: Request, res: Response) => {
+    try {
+      const list = await dbStore.getAllBankQuestions();
+      res.json(list);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
-    const saved = store.saveBankQuestion(qData);
-    res.json({ success: true, question: saved });
   });
 
-  app.delete('/api/admin/question-bank/:id', (req: Request, res: Response) => {
-    const success = store.deleteBankQuestion(req.params.id);
-    res.json({ success });
+  app.post('/api/admin/question-bank', async (req: Request, res: Response) => {
+    try {
+      const qData = req.body;
+      if (!qData.id || !qData.title || !qData.starterCode) {
+        return res.status(400).json({ error: 'Question ID, Title and Starter Code are required' });
+      }
+      const saved = await dbStore.saveBankQuestion(qData);
+      res.json({ success: true, question: saved });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete('/api/admin/question-bank/:id', async (req: Request, res: Response) => {
+    try {
+      const success = await dbStore.deleteBankQuestion(req.params.id);
+      res.json({ success });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   // Legacy Question Admin Map
-  app.get('/api/admin/questions', (req: Request, res: Response) => {
-    res.json(store.getAllBankQuestions());
+  app.get('/api/admin/questions', async (req: Request, res: Response) => {
+    try {
+      const list = await dbStore.getAllBankQuestions();
+      res.json(list);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
-  app.post('/api/admin/questions', (req: Request, res: Response) => {
-    const saved = store.saveBankQuestion(req.body);
-    res.json({ success: true, question: saved });
+  app.post('/api/admin/questions', async (req: Request, res: Response) => {
+    try {
+      const saved = await dbStore.saveBankQuestion(req.body);
+      res.json({ success: true, question: saved });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
-  app.delete('/api/admin/questions/:id', (req: Request, res: Response) => {
-    store.deleteBankQuestion(req.params.id);
-    res.json({ success: true });
+  app.delete('/api/admin/questions/:id', async (req: Request, res: Response) => {
+    try {
+      await dbStore.deleteBankQuestion(req.params.id);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   // Participants & Actions Admin
-  app.get('/api/admin/contests/:contestId/participants', (req: Request, res: Response) => {
-    res.json(store.getAllParticipants(req.params.contestId));
+  app.get('/api/admin/contests/:contestId/participants', async (req: Request, res: Response) => {
+    try {
+      const list = await dbStore.getAllParticipants(req.params.contestId);
+      res.json(list);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
-  app.post('/api/admin/contests/:contestId/participants/:pId/action', (req: Request, res: Response) => {
-    const { contestId, pId } = req.params;
-    const { action, addMinutes } = req.body;
-    const p = store.getParticipant(contestId, pId);
-    if (!p) {
-      return res.status(404).json({ error: 'Participant not found' });
-    }
+  app.post('/api/admin/contests/:contestId/participants/:pId/action', async (req: Request, res: Response) => {
+    try {
+      const { contestId, pId } = req.params;
+      const { action, addMinutes } = req.body;
+      const p = await dbStore.getParticipant(contestId, pId);
+      if (!p) {
+        return res.status(404).json({ error: 'Participant not found' });
+      }
 
-    if (action === 'reset_timer') {
-      store.updateParticipant(contestId, pId, {
-        startTime: Date.now(),
-        status: 'active',
-        completionTimeSeconds: 0,
-      });
-    } else if (action === 'add_time') {
-      const additionalMs = (addMinutes || 5) * 60 * 1000;
-      store.updateParticipant(contestId, pId, {
-        startTime: p.startTime + additionalMs,
-        status: 'active',
-      });
-    } else if (action === 'finish') {
-      store.updateParticipant(contestId, pId, {
-        status: 'completed',
-        endTime: Date.now(),
-      });
-    } else if (action === 'disqualify') {
-      store.updateParticipant(contestId, pId, {
-        status: 'disqualified',
-      });
-    }
+      if (action === 'reset_timer') {
+        await dbStore.updateParticipant(contestId, pId, {
+          startTime: Date.now(),
+          status: 'active',
+          completionTimeSeconds: 0,
+        });
+      } else if (action === 'add_time') {
+        const additionalMs = (addMinutes || 5) * 60 * 1000;
+        await dbStore.updateParticipant(contestId, pId, {
+          startTime: p.startTime + additionalMs,
+          status: 'active',
+        });
+      } else if (action === 'finish') {
+        await dbStore.updateParticipant(contestId, pId, {
+          status: 'completed',
+          endTime: Date.now(),
+        });
+      } else if (action === 'disqualify') {
+        await dbStore.updateParticipant(contestId, pId, {
+          status: 'disqualified',
+        });
+      }
 
-    res.json({ success: true, participant: store.getParticipant(contestId, pId) });
+      res.json({ success: true, participant: await dbStore.getParticipant(contestId, pId) });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   // Legacy action support
-  app.post('/api/admin/participants/:id/action', (req: Request, res: Response) => {
-    const pId = req.params.id;
-    const { action } = req.body;
-    const p = store.getParticipant('breach-the-bug-2026', pId);
-    if (!p) return res.status(404).json({ error: 'Participant not found' });
+  app.post('/api/admin/participants/:id/action', async (req: Request, res: Response) => {
+    try {
+      const pId = req.params.id;
+      const { action } = req.body;
+      const p = await dbStore.getParticipant('breach-the-bug-round-2', pId);
+      if (!p) return res.status(404).json({ error: 'Participant not found' });
 
-    if (action === 'reset_timer') {
-      store.updateParticipant('breach-the-bug-2026', pId, { startTime: Date.now(), status: 'active' });
-    } else if (action === 'finish') {
-      store.updateParticipant('breach-the-bug-2026', pId, { status: 'completed', endTime: Date.now() });
+      if (action === 'reset_timer') {
+        await dbStore.updateParticipant('breach-the-bug-round-2', pId, { startTime: Date.now(), status: 'active' });
+      } else if (action === 'finish') {
+        await dbStore.updateParticipant('breach-the-bug-round-2', pId, { status: 'completed', endTime: Date.now() });
+      }
+      res.json({ success: true, participant: await dbStore.getParticipant('breach-the-bug-round-2', pId) });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
-    res.json({ success: true, participant: store.getParticipant('breach-the-bug-2026', pId) });
   });
 
   // Export Center
-  app.get('/api/admin/contests/:contestId/export', (req: Request, res: Response) => {
-    const { contestId } = req.params;
-    const format = req.query.format || 'json';
-    const contest = store.getContest(contestId);
-    const leaderboard = store.getContestLeaderboard(contestId);
-    const submissions = store.getSubmissions(contestId);
+  app.get('/api/admin/contests/:contestId/export', async (req: Request, res: Response) => {
+    try {
+      const { contestId } = req.params;
+      const format = req.query.format || 'json';
+      const contest = await dbStore.getContest(contestId);
+      const leaderboard = await dbStore.getContestLeaderboard(contestId);
+      const submissions = await dbStore.getSubmissions(contestId);
 
-    if (format === 'csv') {
-      let csv = 'Rank,Participant Name,Register Number,Department,Year,Score,Solved,Completion Time,Status\n';
-      leaderboard.forEach((entry) => {
-        csv += `"${entry.rank}","${entry.name}","${entry.registerNumber}","${entry.department}","${entry.year}","${entry.totalScore}","${entry.solvedCount}/${entry.totalQuestions}","${entry.timeDisplay}","${entry.status}"\n`;
-      });
-      res.setHeader('Content-Type', 'text/csv');
-      res.setHeader(
-        'Content-Disposition',
-        `attachment; filename="ddc_${contestId}_leaderboard.csv"`
-      );
-      return res.send(csv);
+      if (format === 'csv') {
+        let csv = 'Rank,Participant Name,Register Number,Department,Year,Score,Solved,Completion Time,Status\n';
+        leaderboard.forEach((entry) => {
+          csv += `"${entry.rank}","${entry.name}","${entry.registerNumber}","${entry.department}","${entry.year}","${entry.totalScore}","${entry.solvedCount}/${entry.totalQuestions}","${entry.timeDisplay}","${entry.status}"\n`;
+        });
+        res.setHeader('Content-Type', 'text/csv');
+        res.setHeader(
+          'Content-Disposition',
+          `attachment; filename="ddc_${contestId}_leaderboard.csv"`
+        );
+        return res.send(csv);
+      }
+
+      res.json({ contest, leaderboard, submissions });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
-
-    res.json({ contest, leaderboard, submissions });
   });
 
   // Legacy export
-  app.get('/api/admin/export', (req: Request, res: Response) => {
-    const format = req.query.format || 'json';
-    const leaderboard = store.getContestLeaderboard('breach-the-bug-2026');
-    const submissions = store.getSubmissions('breach-the-bug-2026');
+  app.get('/api/admin/export', async (req: Request, res: Response) => {
+    try {
+      const format = req.query.format || 'json';
+      const leaderboard = await dbStore.getContestLeaderboard('breach-the-bug-round-2');
+      const submissions = await dbStore.getSubmissions('breach-the-bug-round-2');
 
-    if (format === 'csv') {
-      let csv = 'Rank,Participant Name,Register Number,Department,Year,Score,Solved,Completion Time,Status\n';
-      leaderboard.forEach((entry) => {
-        csv += `"${entry.rank}","${entry.name}","${entry.registerNumber}","${entry.department}","${entry.year}","${entry.totalScore}","${entry.solvedCount}/${entry.totalQuestions}","${entry.timeDisplay}","${entry.status}"\n`;
-      });
-      res.setHeader('Content-Type', 'text/csv');
-      res.setHeader('Content-Disposition', 'attachment; filename="ddc_compiler_leaderboard.csv"');
-      return res.send(csv);
+      if (format === 'csv') {
+        let csv = 'Rank,Participant Name,Register Number,Department,Year,Score,Solved,Completion Time,Status\n';
+        leaderboard.forEach((entry) => {
+          csv += `"${entry.rank}","${entry.name}","${entry.registerNumber}","${entry.department}","${entry.year}","${entry.totalScore}","${entry.solvedCount}/${entry.totalQuestions}","${entry.timeDisplay}","${entry.status}"\n`;
+        });
+        res.setHeader('Content-Type', 'text/csv');
+        res.setHeader('Content-Disposition', 'attachment; filename="ddc_compiler_leaderboard.csv"');
+        return res.send(csv);
+      }
+
+      res.json({ leaderboard, submissions });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
-
-    res.json({ leaderboard, submissions });
   });
 
   // Vite middleware setup

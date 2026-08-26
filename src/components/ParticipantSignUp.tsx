@@ -106,9 +106,9 @@ export const ParticipantSignUp: React.FC<ParticipantSignUpProps> = ({
       <div className="w-full max-w-2xl">
         {/* Top Logo & Title */}
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-black/60 border border-amber-500/30 p-2 shadow-xl shadow-amber-950/20 mb-4 backdrop-blur-md">
+          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-black/60 border border-amber-500/30 p-2 shadow-xl shadow-amber-950/20 mb-4 backdrop-blur-md overflow-hidden">
             <img
-              src="/brand/club-logo.svg"
+              src="/brand/club-logo.png"
               alt="Designers Domain Club Logo"
               className="w-full h-full object-contain"
               referrerPolicy="no-referrer"
