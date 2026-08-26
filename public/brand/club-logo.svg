@@ -1,0 +1,122 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500" width="100%" height="100%">
+  <!-- Designers Domain Club Official Crest Vector -->
+  <defs>
+    <linearGradient id="goldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFE885" />
+      <stop offset="30%" stop-color="#FFC83B" />
+      <stop offset="70%" stop-color="#E59B00" />
+      <stop offset="100%" stop-color="#B87B00" />
+    </linearGradient>
+    <filter id="goldGlow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="2" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+  </defs>
+
+  <!-- Crown Top -->
+  <g fill="url(#goldGrad)" stroke="#B87B00" stroke-width="1.5">
+    <path d="M 200 115 L 215 65 L 235 95 L 250 50 L 265 95 L 285 65 L 300 115 Z" />
+    <!-- Jewels on Crown -->
+    <circle cx="215" cy="65" r="4" fill="#FFE885" />
+    <circle cx="250" cy="50" r="5" fill="#FFE885" />
+    <circle cx="285" cy="65" r="4" fill="#FFE885" />
+    <rect x="200" y="110" width="100" height="10" rx="3" fill="url(#goldGrad)" />
+    <!-- Moon and Sun details -->
+    <path d="M 185 115 A 6 6 0 1 1 182 125 A 8 8 0 1 0 185 115 Z" />
+    <circle cx="315" cy="120" r="4" fill="#FFC83B" />
+  </g>
+
+  <!-- Filigree Floral Flourishes around top -->
+  <g fill="none" stroke="url(#goldGrad)" stroke-width="3" stroke-linecap="round">
+    <path d="M 195 125 C 160 110, 130 140, 165 160 C 180 170, 195 155, 190 145" />
+    <path d="M 305 125 C 340 110, 370 140, 335 160 C 320 170, 305 155, 310 145" />
+    <path d="M 220 130 C 235 140, 265 140, 280 130" />
+  </g>
+
+  <!-- Left Griffin / Winged Beast -->
+  <g fill="url(#goldGrad)" stroke="#8A5A00" stroke-width="1">
+    <path d="M 140 180 C 120 160, 80 180, 70 210 C 60 230, 80 255, 100 245 C 90 260, 85 285, 95 305 C 105 325, 130 330, 145 320 C 130 340, 110 360, 80 365 C 65 368, 60 360, 50 365 C 45 370, 55 385, 75 385 C 110 385, 140 350, 150 330 L 155 240 C 150 210, 155 190, 140 180 Z" />
+    <!-- Wing Feathers Left -->
+    <path d="M 125 185 C 105 170, 85 190, 65 215 C 60 220, 75 225, 90 220 C 70 235, 65 250, 85 255 C 100 250, 120 230, 130 205 Z" />
+    <!-- Griffin Head Beak & Eye -->
+    <polygon points="120,175 95,185 110,195 125,185" fill="#FFE885" />
+    <circle cx="115" cy="183" r="2" fill="#000" />
+    <!-- Claws -->
+    <path d="M 140 330 L 160 335 L 145 345 Z" fill="#FFE885" />
+  </g>
+
+  <!-- Right Griffin / Winged Beast -->
+  <g fill="url(#goldGrad)" stroke="#8A5A00" stroke-width="1">
+    <path d="M 360 180 C 380 160, 420 180, 430 210 C 440 230, 420 255, 400 245 C 410 260, 415 285, 405 305 C 395 325, 370 330, 355 320 C 370 340, 390 360, 420 365 C 435 368, 440 360, 450 365 C 455 370, 445 385, 425 385 C 390 385, 360 350, 350 330 L 345 240 C 350 210, 345 190, 360 180 Z" />
+    <!-- Wing Feathers Right -->
+    <path d="M 375 185 C 395 170, 415 190, 435 215 C 440 220, 425 225, 410 220 C 430 235, 435 250, 415 255 C 400 250, 380 230, 370 205 Z" />
+    <!-- Griffin Head Beak & Eye -->
+    <polygon points="380,175 405,185 390,195 375,185" fill="#FFE885" />
+    <circle cx="385" cy="183" r="2" fill="#000" />
+    <!-- Claws -->
+    <path d="M 360 330 L 340 335 L 355 345 Z" fill="#FFE885" />
+  </g>
+
+  <!-- Central Shield -->
+  <g>
+    <!-- Outer Shield Border -->
+    <path d="M 180 170 C 230 160, 270 160, 320 170 C 325 240, 315 295, 250 330 C 185 295, 175 240, 180 170 Z" fill="#0c0d12" stroke="url(#goldGrad)" stroke-width="5" />
+    
+    <!-- Quadrant Dividing Lines -->
+    <line x1="250" y1="165" x2="250" y2="328" stroke="url(#goldGrad)" stroke-width="3" />
+    <line x1="180" y1="245" x2="320" y2="245" stroke="url(#goldGrad)" stroke-width="3" />
+
+    <!-- Q1 (Top Left): Think Creative Badge -->
+    <g transform="translate(215, 205)">
+      <circle cx="0" cy="0" r="16" fill="#1e293b" stroke="url(#goldGrad)" stroke-width="1.5" />
+      <polygon points="-5,-6 5,-6 8,0 3,6 -7,6 -4,0" fill="#f59e0b" />
+      <text x="0" y="2" font-family="sans-serif" font-size="6" font-weight="bold" fill="#ffffff" text-anchor="middle">D</text>
+    </g>
+
+    <!-- Q2 (Top Right): 3 Team Circles (Innovation/Community) -->
+    <g transform="translate(285, 205)">
+      <circle cx="-5" cy="-5" r="4" fill="#fb923c" />
+      <circle cx="6" cy="-5" r="4" fill="#818cf8" />
+      <circle cx="0" cy="6" r="4" fill="#ec4899" />
+      <path d="M -5 -2 C -2 4, 2 4, 6 -2" stroke="#ffffff" stroke-width="1.5" fill="none" />
+    </g>
+
+    <!-- Q3 (Bottom Left): Circuit / Technology Matrix -->
+    <g transform="translate(215, 280)">
+      <rect x="-10" y="-8" width="20" height="14" rx="2" fill="#0f172a" stroke="#38bdf8" stroke-width="1" />
+      <path d="M -7 -4 H 7 M -7 0 H 7 M -7 4 H 3" stroke="#38bdf8" stroke-width="1" stroke-linecap="round" />
+      <circle cx="5" cy="4" r="1.5" fill="#22c55e" />
+    </g>
+
+    <!-- Q4 (Bottom Right): Institutional Crest / Seal -->
+    <g transform="translate(285, 280)">
+      <circle cx="0" cy="0" r="14" fill="#854d0e" stroke="url(#goldGrad)" stroke-width="1.5" />
+      <path d="M -6 -4 L 0 -10 L 6 -4 L 4 7 L -4 7 Z" fill="#fef08a" />
+      <circle cx="0" cy="0" r="3" fill="#854d0e" />
+    </g>
+  </g>
+
+  <!-- CSE Ribbon Band -->
+  <g>
+    <path d="M 130 365 C 190 350, 310 350, 370 365 L 360 405 C 300 388, 200 388, 140 405 Z" fill="url(#goldGrad)" stroke="#784b00" stroke-width="2" />
+    <!-- Ribbon Ends Left/Right -->
+    <path d="M 130 365 L 95 360 L 115 385 L 90 410 L 140 405 Z" fill="#D48B00" stroke="#784b00" stroke-width="1.5" />
+    <path d="M 370 365 L 405 360 L 385 385 L 410 410 L 360 405 Z" fill="#D48B00" stroke="#784b00" stroke-width="1.5" />
+    
+    <!-- CSE Banner Text -->
+    <text x="250" y="386" font-family="'Cinzel', 'Trajan Pro', 'Georgia', serif" font-size="24" font-weight="900" fill="#000000" text-anchor="middle" letter-spacing="4">CSE</text>
+    <text x="250" y="398" font-family="monospace" font-size="10" font-weight="bold" fill="#000000" text-anchor="middle" letter-spacing="2">★★★★★★★★</text>
+  </g>
+
+  <!-- Bottom Banner: Designers Domain Club -->
+  <g>
+    <path d="M 100 425 C 180 405, 320 405, 400 425 L 390 470 C 310 445, 190 445, 110 470 Z" fill="#050608" stroke="url(#goldGrad)" stroke-width="3.5" />
+    <path d="M 100 425 L 75 420 L 90 445 L 70 468 L 110 470 Z" fill="#15171e" stroke="url(#goldGrad)" stroke-width="2" />
+    <path d="M 400 425 L 425 420 L 410 445 L 430 468 L 390 470 Z" fill="#15171e" stroke="url(#goldGrad)" stroke-width="2" />
+    
+    <!-- Calligraphic Designers Domain Club text -->
+    <text x="250" y="452" font-family="'Cinzel Decorative', 'Playfair Display', 'UnifrakturMaguntia', 'Georgia', serif" font-size="20" font-weight="bold" fill="url(#goldGrad)" text-anchor="middle" letter-spacing="1">
+      Designers Domain Club
+    </text>
+  </g>
+</svg>
