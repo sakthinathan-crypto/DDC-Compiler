@@ -24,8 +24,12 @@ export function getPoolConfig(): PoolConfig {
       ssl: databaseUrl.includes('localhost') || databaseUrl.includes('127.0.0.1')
         ? false
         : { rejectUnauthorized: false },
-      max: 10,
-      connectionTimeoutMillis: 15000,
+      max: 5,
+      idleTimeoutMillis: 10000,
+      connectionTimeoutMillis: 10000,
+      keepAlive: true,
+      keepAliveInitialDelayMillis: 10000,
+      allowExitOnIdle: true,
     };
   }
 
@@ -36,8 +40,12 @@ export function getPoolConfig(): PoolConfig {
     user: process.env.SQL_USER || process.env.SQL_ADMIN_USER || 'app_user',
     password: process.env.SQL_PASSWORD || process.env.SQL_ADMIN_PASSWORD || '',
     database: process.env.SQL_DB_NAME || 'designers_domain_db',
-    max: 10,
-    connectionTimeoutMillis: 15000,
+    max: 5,
+    idleTimeoutMillis: 10000,
+    connectionTimeoutMillis: 10000,
+    keepAlive: true,
+    keepAliveInitialDelayMillis: 10000,
+    allowExitOnIdle: true,
   };
 }
 
@@ -47,7 +55,8 @@ export const createPool = (): Pool => {
     global._postgresPool = new Pool(config);
 
     global._postgresPool.on('error', (err) => {
-      console.error('Unexpected error on idle SQL pool client:', err);
+      // Ignore transient socket resets/breaks in serverless pools
+      console.warn('Postgres connection pool notice (reconnecting on next query):', err.message);
     });
   }
   return global._postgresPool;

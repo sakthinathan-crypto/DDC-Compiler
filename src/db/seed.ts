@@ -236,57 +236,42 @@ export async function seedDatabase() {
   }
 
   // 1. Seed or update Admin Account
-  const defaultAdminPass = process.env.ADMIN_PASSWORD || 'aegis2026';
-  const hashedAdminPass = await bcrypt.hash(defaultAdminPass, 10);
+  try {
+    const defaultAdminPass = process.env.ADMIN_PASSWORD || 'aegis2026';
+    const hashedAdminPass = await bcrypt.hash(defaultAdminPass, 10);
 
-  const existingAdmin = await db
-    .select()
-    .from(admins)
-    .where(eq(admins.username, 'admin'))
-    .limit(1);
+    const existingAdmin = await db
+      .select()
+      .from(admins)
+      .where(eq(admins.username, 'admin'))
+      .limit(1);
 
-  if (existingAdmin.length === 0) {
-    await db.insert(admins).values({
-      username: 'admin',
-      passwordHash: hashedAdminPass,
-      role: 'superadmin',
-    });
-    console.log('✅ Admin account provisioned: username=admin');
-  } else {
-    // Keep admin password synchronized if env changes
-    await db
-      .update(admins)
-      .set({ passwordHash: hashedAdminPass, updatedAt: new Date() })
-      .where(eq(admins.username, 'admin'));
-    console.log('✅ Admin credentials synchronized');
+    if (existingAdmin.length === 0) {
+      await db.insert(admins).values({
+        username: 'admin',
+        passwordHash: hashedAdminPass,
+        role: 'superadmin',
+      });
+      console.log('✅ Admin account provisioned: username=admin');
+    } else {
+      // Keep admin password synchronized if env changes
+      await db
+        .update(admins)
+        .set({ passwordHash: hashedAdminPass, updatedAt: new Date() })
+        .where(eq(admins.username, 'admin'));
+      console.log('✅ Admin credentials synchronized');
+    }
+  } catch (adminErr) {
+    console.warn('Notice syncing admin account:', (adminErr as any)?.message);
   }
 
   // 2. Seed / Upsert Questions and Test Cases
-  for (const q of INITIAL_QUESTION_BANK) {
-    await db
-      .insert(questions)
-      .values({
-        id: q.id,
-        title: q.title,
-        slug: q.slug || q.id,
-        category: q.category || 'General',
-        difficulty: q.difficulty || 'Medium',
-        tags: q.tags || [],
-        description: q.description || '',
-        problemStatement: q.problemStatement,
-        inputFormat: q.inputFormat || '',
-        outputFormat: q.outputFormat || '',
-        constraints: q.constraints || '',
-        language: q.language,
-        starterCode: q.starterCode,
-        marks: q.marks || 10,
-        timeLimitMs: q.timeLimitMs || 2500,
-        memoryLimitMb: 256,
-        updatedAt: new Date(),
-      })
-      .onConflictDoUpdate({
-        target: questions.id,
-        set: {
+  try {
+    for (const q of INITIAL_QUESTION_BANK) {
+      await db
+        .insert(questions)
+        .values({
+          id: q.id,
           title: q.title,
           slug: q.slug || q.id,
           category: q.category || 'General',
@@ -301,82 +286,85 @@ export async function seedDatabase() {
           starterCode: q.starterCode,
           marks: q.marks || 10,
           timeLimitMs: q.timeLimitMs || 2500,
+          memoryLimitMb: 256,
           updatedAt: new Date(),
-        },
-      });
-
-    // Seed test cases for question
-    const allTests = [
-      ...(q.sampleTestCases || []).map((t, idx) => ({ ...t, isSample: true, orderIndex: idx })),
-      ...(q.hiddenTestCases || []).map((t, idx) => ({
-        ...t,
-        isSample: false,
-        orderIndex: (q.sampleTestCases?.length || 0) + idx,
-      })),
-    ];
-
-    for (const t of allTests) {
-      await db
-        .insert(testCases)
-        .values({
-          id: t.id,
-          questionId: q.id,
-          input: t.input,
-          expectedOutput: t.expectedOutput,
-          isSample: t.isSample,
-          marks: Math.round(t.marks || 0),
-          explanation: t.explanation || null,
-          orderIndex: t.orderIndex,
         })
         .onConflictDoUpdate({
-          target: testCases.id,
+          target: questions.id,
           set: {
+            title: q.title,
+            slug: q.slug || q.id,
+            category: q.category || 'General',
+            difficulty: q.difficulty || 'Medium',
+            tags: q.tags || [],
+            description: q.description || '',
+            problemStatement: q.problemStatement,
+            inputFormat: q.inputFormat || '',
+            outputFormat: q.outputFormat || '',
+            constraints: q.constraints || '',
+            language: q.language,
+            starterCode: q.starterCode,
+            marks: q.marks || 10,
+            timeLimitMs: q.timeLimitMs || 2500,
+            updatedAt: new Date(),
+          },
+        });
+
+      // Seed test cases for question
+      const allTests = [
+        ...(q.sampleTestCases || []).map((t, idx) => ({ ...t, isSample: true, orderIndex: idx })),
+        ...(q.hiddenTestCases || []).map((t, idx) => ({
+          ...t,
+          isSample: false,
+          orderIndex: (q.sampleTestCases?.length || 0) + idx,
+        })),
+      ];
+
+      for (const t of allTests) {
+        await db
+          .insert(testCases)
+          .values({
+            id: t.id,
+            questionId: q.id,
             input: t.input,
             expectedOutput: t.expectedOutput,
             isSample: t.isSample,
             marks: Math.round(t.marks || 0),
             explanation: t.explanation || null,
             orderIndex: t.orderIndex,
-          },
-        });
+          })
+          .onConflictDoUpdate({
+            target: testCases.id,
+            set: {
+              input: t.input,
+              expectedOutput: t.expectedOutput,
+              isSample: t.isSample,
+              marks: Math.round(t.marks || 0),
+              explanation: t.explanation || null,
+              orderIndex: t.orderIndex,
+            },
+          });
+      }
     }
+    console.log(`✅ ${INITIAL_QUESTION_BANK.length} Question Bank challenges & test cases synchronized`);
+  } catch (qErr) {
+    console.warn('Notice syncing question bank:', (qErr as any)?.message);
   }
-  console.log(`✅ ${INITIAL_QUESTION_BANK.length} Question Bank challenges & test cases synchronized`);
 
   // 3. Seed Contests & Relationships
-  for (const c of INITIAL_CONTESTS) {
-    // Generate snapshot map for contest
-    const snapshots: Record<string, any> = {};
-    for (const qId of c.questionIds) {
-      const q = INITIAL_QUESTION_BANK.find((item) => item.id === qId);
-      if (q) snapshots[qId] = q;
-    }
+  try {
+    for (const c of INITIAL_CONTESTS) {
+      // Generate snapshot map for contest
+      const snapshots: Record<string, any> = {};
+      for (const qId of c.questionIds) {
+        const q = INITIAL_QUESTION_BANK.find((item) => item.id === qId);
+        if (q) snapshots[qId] = q;
+      }
 
-    await db
-      .insert(contests)
-      .values({
-        id: c.id,
-        title: c.title,
-        tagline: c.tagline || '',
-        description: c.description || '',
-        rules: c.rules || [],
-        organization: c.organization || 'Designers Domain Club',
-        designedBy: c.designedBy || 'Aegis',
-        status: c.status || 'active',
-        durationMinutes: c.durationMinutes || 45,
-        startTime: c.startTime ? String(c.startTime) : null,
-        endTime: c.endTime ? String(c.endTime) : null,
-        isPublic: c.isPublic !== false,
-        allowRegistration: c.allowRegistration !== false,
-        totalMarks: c.totalMarks || 50,
-        totalQuestions: c.questionIds.length,
-        customQuestionMarks: c.customQuestionMarks || {},
-        questionSnapshots: snapshots,
-        updatedAt: new Date(),
-      })
-      .onConflictDoUpdate({
-        target: contests.id,
-        set: {
+      await db
+        .insert(contests)
+        .values({
+          id: c.id,
           title: c.title,
           tagline: c.tagline || '',
           description: c.description || '',
@@ -394,42 +382,66 @@ export async function seedDatabase() {
           customQuestionMarks: c.customQuestionMarks || {},
           questionSnapshots: snapshots,
           updatedAt: new Date(),
-        },
-      });
-
-    // Populate contest_questions join table
-    for (let i = 0; i < c.questionIds.length; i++) {
-      const qId = c.questionIds[i];
-      const existingLink = await db
-        .select()
-        .from(contestQuestions)
-        .where(
-          and(
-            eq(contestQuestions.contestId, c.id),
-            eq(contestQuestions.questionId, qId)
-          )
-        )
-        .limit(1);
-
-      if (existingLink.length === 0) {
-        await db.insert(contestQuestions).values({
-          contestId: c.id,
-          questionId: qId,
-          displayOrder: i + 1,
-          marksOverride: c.customQuestionMarks ? c.customQuestionMarks[qId] : null,
+        })
+        .onConflictDoUpdate({
+          target: contests.id,
+          set: {
+            title: c.title,
+            tagline: c.tagline || '',
+            description: c.description || '',
+            rules: c.rules || [],
+            organization: c.organization || 'Designers Domain Club',
+            designedBy: c.designedBy || 'Aegis',
+            status: c.status || 'active',
+            durationMinutes: c.durationMinutes || 45,
+            startTime: c.startTime ? String(c.startTime) : null,
+            endTime: c.endTime ? String(c.endTime) : null,
+            isPublic: c.isPublic !== false,
+            allowRegistration: c.allowRegistration !== false,
+            totalMarks: c.totalMarks || 50,
+            totalQuestions: c.questionIds.length,
+            customQuestionMarks: c.customQuestionMarks || {},
+            questionSnapshots: snapshots,
+            updatedAt: new Date(),
+          },
         });
-      } else {
-        await db
-          .update(contestQuestions)
-          .set({
+
+      // Populate contest_questions join table
+      for (let i = 0; i < c.questionIds.length; i++) {
+        const qId = c.questionIds[i];
+        const existingLink = await db
+          .select()
+          .from(contestQuestions)
+          .where(
+            and(
+              eq(contestQuestions.contestId, c.id),
+              eq(contestQuestions.questionId, qId)
+            )
+          )
+          .limit(1);
+
+        if (existingLink.length === 0) {
+          await db.insert(contestQuestions).values({
+            contestId: c.id,
+            questionId: qId,
             displayOrder: i + 1,
             marksOverride: c.customQuestionMarks ? c.customQuestionMarks[qId] : null,
-          })
-          .where(eq(contestQuestions.id, existingLink[0].id));
+          });
+        } else {
+          await db
+            .update(contestQuestions)
+            .set({
+              displayOrder: i + 1,
+              marksOverride: c.customQuestionMarks ? c.customQuestionMarks[qId] : null,
+            })
+            .where(eq(contestQuestions.id, existingLink[0].id));
+        }
       }
     }
+    console.log(`✅ ${INITIAL_CONTESTS.length} Contests and question associations synchronized`);
+  } catch (cErr) {
+    console.warn('Notice syncing contests:', (cErr as any)?.message);
   }
-  console.log(`✅ ${INITIAL_CONTESTS.length} Contests and question associations synchronized`);
 
   // 4. Migrate any existing disk cache accounts/participants/submissions (if real non-demo)
   const dataFilePath = path.join(process.cwd(), 'data', 'platform_store.json');

@@ -277,8 +277,12 @@ function getPoolConfig() {
     return {
       connectionString: databaseUrl,
       ssl: databaseUrl.includes("localhost") || databaseUrl.includes("127.0.0.1") ? false : { rejectUnauthorized: false },
-      max: 10,
-      connectionTimeoutMillis: 15e3
+      max: 5,
+      idleTimeoutMillis: 1e4,
+      connectionTimeoutMillis: 1e4,
+      keepAlive: true,
+      keepAliveInitialDelayMillis: 1e4,
+      allowExitOnIdle: true
     };
   }
   return {
@@ -287,8 +291,12 @@ function getPoolConfig() {
     user: process.env.SQL_USER || process.env.SQL_ADMIN_USER || "app_user",
     password: process.env.SQL_PASSWORD || process.env.SQL_ADMIN_PASSWORD || "",
     database: process.env.SQL_DB_NAME || "designers_domain_db",
-    max: 10,
-    connectionTimeoutMillis: 15e3
+    max: 5,
+    idleTimeoutMillis: 1e4,
+    connectionTimeoutMillis: 1e4,
+    keepAlive: true,
+    keepAliveInitialDelayMillis: 1e4,
+    allowExitOnIdle: true
   };
 }
 var createPool = () => {
@@ -296,7 +304,7 @@ var createPool = () => {
     const config2 = getPoolConfig();
     global._postgresPool = new Pool(config2);
     global._postgresPool.on("error", (err) => {
-      console.error("Unexpected error on idle SQL pool client:", err);
+      console.warn("Postgres connection pool notice (reconnecting on next query):", err.message);
     });
   }
   return global._postgresPool;
@@ -2039,42 +2047,28 @@ async function seedDatabase() {
   } catch (tableErr) {
     console.error("Notice on table initialization:", tableErr);
   }
-  const defaultAdminPass = process.env.ADMIN_PASSWORD || "aegis2026";
-  const hashedAdminPass = await bcrypt.hash(defaultAdminPass, 10);
-  const existingAdmin = await db.select().from(admins).where(eq(admins.username, "admin")).limit(1);
-  if (existingAdmin.length === 0) {
-    await db.insert(admins).values({
-      username: "admin",
-      passwordHash: hashedAdminPass,
-      role: "superadmin"
-    });
-    console.log("\u2705 Admin account provisioned: username=admin");
-  } else {
-    await db.update(admins).set({ passwordHash: hashedAdminPass, updatedAt: /* @__PURE__ */ new Date() }).where(eq(admins.username, "admin"));
-    console.log("\u2705 Admin credentials synchronized");
+  try {
+    const defaultAdminPass = process.env.ADMIN_PASSWORD || "aegis2026";
+    const hashedAdminPass = await bcrypt.hash(defaultAdminPass, 10);
+    const existingAdmin = await db.select().from(admins).where(eq(admins.username, "admin")).limit(1);
+    if (existingAdmin.length === 0) {
+      await db.insert(admins).values({
+        username: "admin",
+        passwordHash: hashedAdminPass,
+        role: "superadmin"
+      });
+      console.log("\u2705 Admin account provisioned: username=admin");
+    } else {
+      await db.update(admins).set({ passwordHash: hashedAdminPass, updatedAt: /* @__PURE__ */ new Date() }).where(eq(admins.username, "admin"));
+      console.log("\u2705 Admin credentials synchronized");
+    }
+  } catch (adminErr) {
+    console.warn("Notice syncing admin account:", adminErr?.message);
   }
-  for (const q of INITIAL_QUESTION_BANK) {
-    await db.insert(questions).values({
-      id: q.id,
-      title: q.title,
-      slug: q.slug || q.id,
-      category: q.category || "General",
-      difficulty: q.difficulty || "Medium",
-      tags: q.tags || [],
-      description: q.description || "",
-      problemStatement: q.problemStatement,
-      inputFormat: q.inputFormat || "",
-      outputFormat: q.outputFormat || "",
-      constraints: q.constraints || "",
-      language: q.language,
-      starterCode: q.starterCode,
-      marks: q.marks || 10,
-      timeLimitMs: q.timeLimitMs || 2500,
-      memoryLimitMb: 256,
-      updatedAt: /* @__PURE__ */ new Date()
-    }).onConflictDoUpdate({
-      target: questions.id,
-      set: {
+  try {
+    for (const q of INITIAL_QUESTION_BANK) {
+      await db.insert(questions).values({
+        id: q.id,
         title: q.title,
         slug: q.slug || q.id,
         category: q.category || "General",
@@ -2089,69 +2083,72 @@ async function seedDatabase() {
         starterCode: q.starterCode,
         marks: q.marks || 10,
         timeLimitMs: q.timeLimitMs || 2500,
+        memoryLimitMb: 256,
         updatedAt: /* @__PURE__ */ new Date()
-      }
-    });
-    const allTests = [
-      ...(q.sampleTestCases || []).map((t, idx) => ({ ...t, isSample: true, orderIndex: idx })),
-      ...(q.hiddenTestCases || []).map((t, idx) => ({
-        ...t,
-        isSample: false,
-        orderIndex: (q.sampleTestCases?.length || 0) + idx
-      }))
-    ];
-    for (const t of allTests) {
-      await db.insert(testCases).values({
-        id: t.id,
-        questionId: q.id,
-        input: t.input,
-        expectedOutput: t.expectedOutput,
-        isSample: t.isSample,
-        marks: Math.round(t.marks || 0),
-        explanation: t.explanation || null,
-        orderIndex: t.orderIndex
       }).onConflictDoUpdate({
-        target: testCases.id,
+        target: questions.id,
         set: {
+          title: q.title,
+          slug: q.slug || q.id,
+          category: q.category || "General",
+          difficulty: q.difficulty || "Medium",
+          tags: q.tags || [],
+          description: q.description || "",
+          problemStatement: q.problemStatement,
+          inputFormat: q.inputFormat || "",
+          outputFormat: q.outputFormat || "",
+          constraints: q.constraints || "",
+          language: q.language,
+          starterCode: q.starterCode,
+          marks: q.marks || 10,
+          timeLimitMs: q.timeLimitMs || 2500,
+          updatedAt: /* @__PURE__ */ new Date()
+        }
+      });
+      const allTests = [
+        ...(q.sampleTestCases || []).map((t, idx) => ({ ...t, isSample: true, orderIndex: idx })),
+        ...(q.hiddenTestCases || []).map((t, idx) => ({
+          ...t,
+          isSample: false,
+          orderIndex: (q.sampleTestCases?.length || 0) + idx
+        }))
+      ];
+      for (const t of allTests) {
+        await db.insert(testCases).values({
+          id: t.id,
+          questionId: q.id,
           input: t.input,
           expectedOutput: t.expectedOutput,
           isSample: t.isSample,
           marks: Math.round(t.marks || 0),
           explanation: t.explanation || null,
           orderIndex: t.orderIndex
-        }
-      });
+        }).onConflictDoUpdate({
+          target: testCases.id,
+          set: {
+            input: t.input,
+            expectedOutput: t.expectedOutput,
+            isSample: t.isSample,
+            marks: Math.round(t.marks || 0),
+            explanation: t.explanation || null,
+            orderIndex: t.orderIndex
+          }
+        });
+      }
     }
+    console.log(`\u2705 ${INITIAL_QUESTION_BANK.length} Question Bank challenges & test cases synchronized`);
+  } catch (qErr) {
+    console.warn("Notice syncing question bank:", qErr?.message);
   }
-  console.log(`\u2705 ${INITIAL_QUESTION_BANK.length} Question Bank challenges & test cases synchronized`);
-  for (const c of INITIAL_CONTESTS) {
-    const snapshots = {};
-    for (const qId of c.questionIds) {
-      const q = INITIAL_QUESTION_BANK.find((item) => item.id === qId);
-      if (q) snapshots[qId] = q;
-    }
-    await db.insert(contests).values({
-      id: c.id,
-      title: c.title,
-      tagline: c.tagline || "",
-      description: c.description || "",
-      rules: c.rules || [],
-      organization: c.organization || "Designers Domain Club",
-      designedBy: c.designedBy || "Aegis",
-      status: c.status || "active",
-      durationMinutes: c.durationMinutes || 45,
-      startTime: c.startTime ? String(c.startTime) : null,
-      endTime: c.endTime ? String(c.endTime) : null,
-      isPublic: c.isPublic !== false,
-      allowRegistration: c.allowRegistration !== false,
-      totalMarks: c.totalMarks || 50,
-      totalQuestions: c.questionIds.length,
-      customQuestionMarks: c.customQuestionMarks || {},
-      questionSnapshots: snapshots,
-      updatedAt: /* @__PURE__ */ new Date()
-    }).onConflictDoUpdate({
-      target: contests.id,
-      set: {
+  try {
+    for (const c of INITIAL_CONTESTS) {
+      const snapshots = {};
+      for (const qId of c.questionIds) {
+        const q = INITIAL_QUESTION_BANK.find((item) => item.id === qId);
+        if (q) snapshots[qId] = q;
+      }
+      await db.insert(contests).values({
+        id: c.id,
         title: c.title,
         tagline: c.tagline || "",
         description: c.description || "",
@@ -2169,32 +2166,55 @@ async function seedDatabase() {
         customQuestionMarks: c.customQuestionMarks || {},
         questionSnapshots: snapshots,
         updatedAt: /* @__PURE__ */ new Date()
-      }
-    });
-    for (let i = 0; i < c.questionIds.length; i++) {
-      const qId = c.questionIds[i];
-      const existingLink = await db.select().from(contestQuestions).where(
-        and(
-          eq(contestQuestions.contestId, c.id),
-          eq(contestQuestions.questionId, qId)
-        )
-      ).limit(1);
-      if (existingLink.length === 0) {
-        await db.insert(contestQuestions).values({
-          contestId: c.id,
-          questionId: qId,
-          displayOrder: i + 1,
-          marksOverride: c.customQuestionMarks ? c.customQuestionMarks[qId] : null
-        });
-      } else {
-        await db.update(contestQuestions).set({
-          displayOrder: i + 1,
-          marksOverride: c.customQuestionMarks ? c.customQuestionMarks[qId] : null
-        }).where(eq(contestQuestions.id, existingLink[0].id));
+      }).onConflictDoUpdate({
+        target: contests.id,
+        set: {
+          title: c.title,
+          tagline: c.tagline || "",
+          description: c.description || "",
+          rules: c.rules || [],
+          organization: c.organization || "Designers Domain Club",
+          designedBy: c.designedBy || "Aegis",
+          status: c.status || "active",
+          durationMinutes: c.durationMinutes || 45,
+          startTime: c.startTime ? String(c.startTime) : null,
+          endTime: c.endTime ? String(c.endTime) : null,
+          isPublic: c.isPublic !== false,
+          allowRegistration: c.allowRegistration !== false,
+          totalMarks: c.totalMarks || 50,
+          totalQuestions: c.questionIds.length,
+          customQuestionMarks: c.customQuestionMarks || {},
+          questionSnapshots: snapshots,
+          updatedAt: /* @__PURE__ */ new Date()
+        }
+      });
+      for (let i = 0; i < c.questionIds.length; i++) {
+        const qId = c.questionIds[i];
+        const existingLink = await db.select().from(contestQuestions).where(
+          and(
+            eq(contestQuestions.contestId, c.id),
+            eq(contestQuestions.questionId, qId)
+          )
+        ).limit(1);
+        if (existingLink.length === 0) {
+          await db.insert(contestQuestions).values({
+            contestId: c.id,
+            questionId: qId,
+            displayOrder: i + 1,
+            marksOverride: c.customQuestionMarks ? c.customQuestionMarks[qId] : null
+          });
+        } else {
+          await db.update(contestQuestions).set({
+            displayOrder: i + 1,
+            marksOverride: c.customQuestionMarks ? c.customQuestionMarks[qId] : null
+          }).where(eq(contestQuestions.id, existingLink[0].id));
+        }
       }
     }
+    console.log(`\u2705 ${INITIAL_CONTESTS.length} Contests and question associations synchronized`);
+  } catch (cErr) {
+    console.warn("Notice syncing contests:", cErr?.message);
   }
-  console.log(`\u2705 ${INITIAL_CONTESTS.length} Contests and question associations synchronized`);
   const dataFilePath = path.join(process.cwd(), "data", "platform_store.json");
   if (fs.existsSync(dataFilePath)) {
     try {
@@ -2316,11 +2336,15 @@ data: ${JSON.stringify(payload)}
   }
   // ================= ADMIN AUTHENTICATION ================= //
   async verifyAdminPassword(inputPass) {
-    await this.ensureInitialized();
-    const adminRows = await db.select().from(admins).where(eq2(admins.username, "admin")).limit(1);
-    if (adminRows.length > 0) {
-      const match = await bcrypt2.compare(inputPass, adminRows[0].passwordHash);
-      if (match) return true;
+    try {
+      await this.ensureInitialized();
+      const adminRows = await db.select().from(admins).where(eq2(admins.username, "admin")).limit(1);
+      if (adminRows.length > 0) {
+        const match = await bcrypt2.compare(inputPass, adminRows[0].passwordHash);
+        if (match) return true;
+      }
+    } catch (err) {
+      console.warn("Notice verifying admin password via database:", err?.message);
     }
     const envPass = process.env.ADMIN_PASSWORD || "aegis2026";
     return inputPass === envPass || inputPass === "aegis2026" || inputPass === "admin";
@@ -2403,40 +2427,64 @@ data: ${JSON.stringify(payload)}
     return publics.length > 0 ? publics : all;
   }
   async getContest(id) {
-    await this.ensureInitialized();
-    const cRows = await db.select().from(contests).where(eq2(contests.id, id)).limit(1);
-    if (cRows.length === 0) return void 0;
-    const c = cRows[0];
-    const cqs = await db.select().from(contestQuestions).where(eq2(contestQuestions.contestId, c.id)).orderBy(contestQuestions.displayOrder);
-    const qIds = cqs.map((link) => link.questionId);
-    const pRows = await db.select().from(contestParticipants).where(eq2(contestParticipants.contestId, c.id));
-    const sRows = await db.select().from(submissions).where(eq2(submissions.contestId, c.id));
-    return {
-      id: c.id,
-      title: c.title,
-      tagline: c.tagline || "",
-      description: c.description || "",
-      rules: c.rules || [],
-      organization: c.organization,
-      designedBy: c.designedBy,
-      status: c.status,
-      durationMinutes: c.durationMinutes,
-      startDate: c.startDate || void 0,
-      startTime: c.startTime ? parseInt(c.startTime, 10) : void 0,
-      endDate: c.endDate || void 0,
-      endTime: c.endTime ? parseInt(c.endTime, 10) : void 0,
-      isPublic: c.isPublic,
-      allowRegistration: c.allowRegistration,
-      questionIds: qIds.length > 0 ? qIds : Object.keys(c.questionSnapshots || {}),
-      totalMarks: c.totalMarks,
-      totalQuestions: qIds.length > 0 ? qIds.length : c.totalQuestions,
-      participantCount: pRows.length,
-      submissionCount: sRows.length,
-      customQuestionMarks: c.customQuestionMarks || {},
-      questionSnapshots: c.questionSnapshots || {},
-      createdAt: c.createdAt.getTime(),
-      updatedAt: c.updatedAt.getTime()
-    };
+    try {
+      await this.ensureInitialized();
+      const cRows = await db.select().from(contests).where(eq2(contests.id, id)).limit(1);
+      if (cRows.length === 0) {
+        return INITIAL_CONTESTS.find((item) => item.id === id);
+      }
+      const c = cRows[0];
+      let qIds = [];
+      let pCount = 0;
+      let sCount = 0;
+      try {
+        const cqs = await db.select().from(contestQuestions).where(eq2(contestQuestions.contestId, c.id)).orderBy(contestQuestions.displayOrder);
+        qIds = cqs.map((link) => link.questionId);
+      } catch (_) {
+      }
+      if (qIds.length === 0 && c.questionSnapshots) {
+        qIds = Object.keys(c.questionSnapshots);
+      }
+      try {
+        const pRows = await db.select().from(contestParticipants).where(eq2(contestParticipants.contestId, c.id));
+        pCount = pRows.length;
+      } catch (_) {
+      }
+      try {
+        const sRows = await db.select().from(submissions).where(eq2(submissions.contestId, c.id));
+        sCount = sRows.length;
+      } catch (_) {
+      }
+      return {
+        id: c.id,
+        title: c.title,
+        tagline: c.tagline || "",
+        description: c.description || "",
+        rules: c.rules || [],
+        organization: c.organization || "Designers Domain Club",
+        designedBy: c.designedBy || "Aegis",
+        status: c.status,
+        durationMinutes: c.durationMinutes || 45,
+        startDate: c.startDate || void 0,
+        startTime: c.startTime ? parseInt(c.startTime, 10) : void 0,
+        endDate: c.endDate || void 0,
+        endTime: c.endTime ? parseInt(c.endTime, 10) : void 0,
+        isPublic: c.isPublic !== false,
+        allowRegistration: c.allowRegistration !== false,
+        questionIds: qIds.length > 0 ? qIds : Object.keys(c.questionSnapshots || {}),
+        totalMarks: c.totalMarks || 50,
+        totalQuestions: qIds.length > 0 ? qIds.length : c.totalQuestions || 5,
+        participantCount: pCount,
+        submissionCount: sCount,
+        customQuestionMarks: c.customQuestionMarks || {},
+        questionSnapshots: c.questionSnapshots || {},
+        createdAt: c.createdAt ? c.createdAt.getTime() : Date.now(),
+        updatedAt: c.updatedAt ? c.updatedAt.getTime() : Date.now()
+      };
+    } catch (err) {
+      console.warn(`Notice fetching contest ${id}:`, err?.message);
+      return INITIAL_CONTESTS.find((item) => item.id === id);
+    }
   }
   async saveContest(contestData) {
     await this.ensureInitialized();
@@ -2555,27 +2603,90 @@ data: ${JSON.stringify(payload)}
   }
   // ================= QUESTION BANK API ================= //
   async getAllBankQuestions() {
-    const qRows = await db.select().from(questions);
-    const result = [];
-    for (const q of qRows) {
-      const tests = await db.select().from(testCases).where(eq2(testCases.questionId, q.id)).orderBy(testCases.orderIndex);
-      const sampleTestCases = tests.filter((t) => t.isSample).map((t) => ({
-        id: t.id,
-        input: t.input,
-        expectedOutput: t.expectedOutput,
-        isSample: true,
-        marks: t.marks,
-        explanation: t.explanation || void 0
-      }));
-      const hiddenTestCases = tests.filter((t) => !t.isSample).map((t) => ({
-        id: t.id,
-        input: t.input,
-        expectedOutput: t.expectedOutput,
-        isSample: false,
-        marks: t.marks,
-        explanation: t.explanation || void 0
-      }));
-      result.push({
+    try {
+      await this.ensureInitialized();
+      const qRows = await db.select().from(questions);
+      const result = [];
+      for (const q of qRows) {
+        let sampleTestCases = [];
+        let hiddenTestCases = [];
+        try {
+          const tests = await db.select().from(testCases).where(eq2(testCases.questionId, q.id)).orderBy(testCases.orderIndex);
+          sampleTestCases = tests.filter((t) => t.isSample).map((t) => ({
+            id: t.id,
+            input: t.input,
+            expectedOutput: t.expectedOutput,
+            isSample: true,
+            marks: t.marks,
+            explanation: t.explanation || void 0
+          }));
+          hiddenTestCases = tests.filter((t) => !t.isSample).map((t) => ({
+            id: t.id,
+            input: t.input,
+            expectedOutput: t.expectedOutput,
+            isSample: false,
+            marks: t.marks,
+            explanation: t.explanation || void 0
+          }));
+        } catch (_) {
+        }
+        result.push({
+          id: q.id,
+          title: q.title,
+          slug: q.slug || q.id,
+          category: q.category || void 0,
+          difficulty: q.difficulty,
+          tags: q.tags || [],
+          description: q.description || "",
+          problemStatement: q.problemStatement,
+          inputFormat: q.inputFormat || "",
+          outputFormat: q.outputFormat || "",
+          constraints: q.constraints || "",
+          language: q.language,
+          starterCode: q.starterCode,
+          marks: q.marks,
+          timeLimitMs: q.timeLimitMs,
+          sampleTestCases,
+          hiddenTestCases
+        });
+      }
+      return result.length > 0 ? result.sort((a, b) => a.title.localeCompare(b.title)) : INITIAL_QUESTION_BANK;
+    } catch (err) {
+      console.warn("Notice querying question bank:", err?.message);
+      return INITIAL_QUESTION_BANK;
+    }
+  }
+  async getBankQuestion(id) {
+    try {
+      await this.ensureInitialized();
+      const qRows = await db.select().from(questions).where(eq2(questions.id, id)).limit(1);
+      if (qRows.length === 0) {
+        return INITIAL_QUESTION_BANK.find((q2) => q2.id === id);
+      }
+      const q = qRows[0];
+      let sampleTestCases = [];
+      let hiddenTestCases = [];
+      try {
+        const tests = await db.select().from(testCases).where(eq2(testCases.questionId, q.id)).orderBy(testCases.orderIndex);
+        sampleTestCases = tests.filter((t) => t.isSample).map((t) => ({
+          id: t.id,
+          input: t.input,
+          expectedOutput: t.expectedOutput,
+          isSample: true,
+          marks: t.marks,
+          explanation: t.explanation || void 0
+        }));
+        hiddenTestCases = tests.filter((t) => !t.isSample).map((t) => ({
+          id: t.id,
+          input: t.input,
+          expectedOutput: t.expectedOutput,
+          isSample: false,
+          marks: t.marks,
+          explanation: t.explanation || void 0
+        }));
+      } catch (_) {
+      }
+      return {
         id: q.id,
         title: q.title,
         slug: q.slug || q.id,
@@ -2593,50 +2704,11 @@ data: ${JSON.stringify(payload)}
         timeLimitMs: q.timeLimitMs,
         sampleTestCases,
         hiddenTestCases
-      });
+      };
+    } catch (err) {
+      console.warn(`Notice querying question ${id}:`, err?.message);
+      return INITIAL_QUESTION_BANK.find((q) => q.id === id);
     }
-    return result.sort((a, b) => a.title.localeCompare(b.title));
-  }
-  async getBankQuestion(id) {
-    const qRows = await db.select().from(questions).where(eq2(questions.id, id)).limit(1);
-    if (qRows.length === 0) return void 0;
-    const q = qRows[0];
-    const tests = await db.select().from(testCases).where(eq2(testCases.questionId, q.id)).orderBy(testCases.orderIndex);
-    const sampleTestCases = tests.filter((t) => t.isSample).map((t) => ({
-      id: t.id,
-      input: t.input,
-      expectedOutput: t.expectedOutput,
-      isSample: true,
-      marks: t.marks,
-      explanation: t.explanation || void 0
-    }));
-    const hiddenTestCases = tests.filter((t) => !t.isSample).map((t) => ({
-      id: t.id,
-      input: t.input,
-      expectedOutput: t.expectedOutput,
-      isSample: false,
-      marks: t.marks,
-      explanation: t.explanation || void 0
-    }));
-    return {
-      id: q.id,
-      title: q.title,
-      slug: q.slug || q.id,
-      category: q.category || void 0,
-      difficulty: q.difficulty,
-      tags: q.tags || [],
-      description: q.description || "",
-      problemStatement: q.problemStatement,
-      inputFormat: q.inputFormat || "",
-      outputFormat: q.outputFormat || "",
-      constraints: q.constraints || "",
-      language: q.language,
-      starterCode: q.starterCode,
-      marks: q.marks,
-      timeLimitMs: q.timeLimitMs,
-      sampleTestCases,
-      hiddenTestCases
-    };
   }
   async saveBankQuestion(qData) {
     await db.insert(questions).values({
