@@ -1,4 +1,4 @@
-import { createApp } from '../server/app';
+import { createApp } from './app';
 
 let cachedApp: any = null;
 
@@ -14,4 +14,3 @@ export default async function handler(req: any, res: any) {
 
   return cachedApp(req, res);
 }
-
