@@ -16,17 +16,16 @@ import {
 import { INITIAL_CONTESTS, INITIAL_QUESTION_BANK } from '../../server/questionsData';
 
 export async function createTablesIfNotExist() {
-  const ddl = `
-    CREATE TABLE IF NOT EXISTS admins (
+  const statements = [
+    `CREATE TABLE IF NOT EXISTS admins (
       id SERIAL PRIMARY KEY,
       username VARCHAR(100) NOT NULL UNIQUE,
       password_hash TEXT NOT NULL,
       role VARCHAR(50) NOT NULL DEFAULT 'superadmin',
       created_at TIMESTAMP NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMP NOT NULL DEFAULT NOW()
-    );
-
-    CREATE TABLE IF NOT EXISTS accounts (
+    )`,
+    `CREATE TABLE IF NOT EXISTS accounts (
       id TEXT PRIMARY KEY,
       participant_id VARCHAR(50) NOT NULL UNIQUE,
       name TEXT NOT NULL,
@@ -39,9 +38,8 @@ export async function createTablesIfNotExist() {
       password_hash TEXT NOT NULL,
       created_at TIMESTAMP NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMP NOT NULL DEFAULT NOW()
-    );
-
-    CREATE TABLE IF NOT EXISTS questions (
+    )`,
+    `CREATE TABLE IF NOT EXISTS questions (
       id TEXT PRIMARY KEY,
       title TEXT NOT NULL,
       slug TEXT,
@@ -60,9 +58,8 @@ export async function createTablesIfNotExist() {
       memory_limit_mb INTEGER NOT NULL DEFAULT 256,
       created_at TIMESTAMP NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMP NOT NULL DEFAULT NOW()
-    );
-
-    CREATE TABLE IF NOT EXISTS test_cases (
+    )`,
+    `CREATE TABLE IF NOT EXISTS test_cases (
       id TEXT PRIMARY KEY,
       question_id TEXT NOT NULL REFERENCES questions(id) ON DELETE CASCADE,
       input TEXT NOT NULL,
@@ -72,9 +69,8 @@ export async function createTablesIfNotExist() {
       explanation TEXT,
       order_index INTEGER NOT NULL DEFAULT 0,
       created_at TIMESTAMP NOT NULL DEFAULT NOW()
-    );
-
-    CREATE TABLE IF NOT EXISTS contests (
+    )`,
+    `CREATE TABLE IF NOT EXISTS contests (
       id TEXT PRIMARY KEY,
       title TEXT NOT NULL,
       tagline TEXT,
@@ -96,18 +92,16 @@ export async function createTablesIfNotExist() {
       question_snapshots JSONB NOT NULL DEFAULT '{}'::jsonb,
       created_at TIMESTAMP NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMP NOT NULL DEFAULT NOW()
-    );
-
-    CREATE TABLE IF NOT EXISTS contest_questions (
+    )`,
+    `CREATE TABLE IF NOT EXISTS contest_questions (
       id SERIAL PRIMARY KEY,
       contest_id TEXT NOT NULL REFERENCES contests(id) ON DELETE CASCADE,
       question_id TEXT NOT NULL REFERENCES questions(id) ON DELETE CASCADE,
       display_order INTEGER NOT NULL DEFAULT 0,
       marks_override INTEGER,
       created_at TIMESTAMP NOT NULL DEFAULT NOW()
-    );
-
-    CREATE TABLE IF NOT EXISTS contest_participants (
+    )`,
+    `CREATE TABLE IF NOT EXISTS contest_participants (
       id TEXT PRIMARY KEY,
       contest_id TEXT NOT NULL REFERENCES contests(id) ON DELETE CASCADE,
       participant_id VARCHAR(50) NOT NULL,
@@ -126,9 +120,8 @@ export async function createTablesIfNotExist() {
       completion_time_seconds INTEGER NOT NULL DEFAULT 0,
       registered_at TIMESTAMP NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMP NOT NULL DEFAULT NOW()
-    );
-
-    CREATE TABLE IF NOT EXISTS submissions (
+    )`,
+    `CREATE TABLE IF NOT EXISTS submissions (
       id TEXT PRIMARY KEY,
       contest_id TEXT NOT NULL REFERENCES contests(id) ON DELETE CASCADE,
       participant_id VARCHAR(50) NOT NULL,
@@ -146,69 +139,74 @@ export async function createTablesIfNotExist() {
       test_results JSONB NOT NULL DEFAULT '[]'::jsonb,
       submitted_at_epoch TEXT NOT NULL,
       created_at TIMESTAMP NOT NULL DEFAULT NOW()
-    );
+    )`,
+    // Column Migrations (safe idempotent alter statements)
+    `ALTER TABLE contests ADD COLUMN IF NOT EXISTS tagline TEXT`,
+    `ALTER TABLE contests ADD COLUMN IF NOT EXISTS description TEXT`,
+    `ALTER TABLE contests ADD COLUMN IF NOT EXISTS rules JSONB NOT NULL DEFAULT '[]'::jsonb`,
+    `ALTER TABLE contests ADD COLUMN IF NOT EXISTS organization TEXT NOT NULL DEFAULT 'Designers Domain Club'`,
+    `ALTER TABLE contests ADD COLUMN IF NOT EXISTS designed_by TEXT NOT NULL DEFAULT 'Aegis'`,
+    `ALTER TABLE contests ADD COLUMN IF NOT EXISTS status VARCHAR(30) NOT NULL DEFAULT 'draft'`,
+    `ALTER TABLE contests ADD COLUMN IF NOT EXISTS duration_minutes INTEGER NOT NULL DEFAULT 45`,
+    `ALTER TABLE contests ADD COLUMN IF NOT EXISTS start_date TEXT`,
+    `ALTER TABLE contests ADD COLUMN IF NOT EXISTS start_time TEXT`,
+    `ALTER TABLE contests ADD COLUMN IF NOT EXISTS end_date TEXT`,
+    `ALTER TABLE contests ADD COLUMN IF NOT EXISTS end_time TEXT`,
+    `ALTER TABLE contests ADD COLUMN IF NOT EXISTS is_public BOOLEAN NOT NULL DEFAULT TRUE`,
+    `ALTER TABLE contests ADD COLUMN IF NOT EXISTS allow_registration BOOLEAN NOT NULL DEFAULT TRUE`,
+    `ALTER TABLE contests ADD COLUMN IF NOT EXISTS total_marks INTEGER NOT NULL DEFAULT 50`,
+    `ALTER TABLE contests ADD COLUMN IF NOT EXISTS total_questions INTEGER NOT NULL DEFAULT 5`,
+    `ALTER TABLE contests ADD COLUMN IF NOT EXISTS custom_question_marks JSONB NOT NULL DEFAULT '{}'::jsonb`,
+    `ALTER TABLE contests ADD COLUMN IF NOT EXISTS question_snapshots JSONB NOT NULL DEFAULT '{}'::jsonb`,
+    `ALTER TABLE contests ADD COLUMN IF NOT EXISTS created_at TIMESTAMP NOT NULL DEFAULT NOW()`,
+    `ALTER TABLE contests ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP NOT NULL DEFAULT NOW()`,
 
-    -- Ensure missing columns are added if tables already existed with older schema
-    ALTER TABLE contests ADD COLUMN IF NOT EXISTS tagline TEXT;
-    ALTER TABLE contests ADD COLUMN IF NOT EXISTS description TEXT;
-    ALTER TABLE contests ADD COLUMN IF NOT EXISTS rules JSONB NOT NULL DEFAULT '[]'::jsonb;
-    ALTER TABLE contests ADD COLUMN IF NOT EXISTS organization TEXT NOT NULL DEFAULT 'Designers Domain Club';
-    ALTER TABLE contests ADD COLUMN IF NOT EXISTS designed_by TEXT NOT NULL DEFAULT 'Aegis';
-    ALTER TABLE contests ADD COLUMN IF NOT EXISTS status VARCHAR(30) NOT NULL DEFAULT 'draft';
-    ALTER TABLE contests ADD COLUMN IF NOT EXISTS duration_minutes INTEGER NOT NULL DEFAULT 45;
-    ALTER TABLE contests ADD COLUMN IF NOT EXISTS start_date TEXT;
-    ALTER TABLE contests ADD COLUMN IF NOT EXISTS start_time TEXT;
-    ALTER TABLE contests ADD COLUMN IF NOT EXISTS end_date TEXT;
-    ALTER TABLE contests ADD COLUMN IF NOT EXISTS end_time TEXT;
-    ALTER TABLE contests ADD COLUMN IF NOT EXISTS is_public BOOLEAN NOT NULL DEFAULT TRUE;
-    ALTER TABLE contests ADD COLUMN IF NOT EXISTS allow_registration BOOLEAN NOT NULL DEFAULT TRUE;
-    ALTER TABLE contests ADD COLUMN IF NOT EXISTS total_marks INTEGER NOT NULL DEFAULT 50;
-    ALTER TABLE contests ADD COLUMN IF NOT EXISTS total_questions INTEGER NOT NULL DEFAULT 5;
-    ALTER TABLE contests ADD COLUMN IF NOT EXISTS custom_question_marks JSONB NOT NULL DEFAULT '{}'::jsonb;
-    ALTER TABLE contests ADD COLUMN IF NOT EXISTS question_snapshots JSONB NOT NULL DEFAULT '{}'::jsonb;
-    ALTER TABLE contests ADD COLUMN IF NOT EXISTS created_at TIMESTAMP NOT NULL DEFAULT NOW();
-    ALTER TABLE contests ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP NOT NULL DEFAULT NOW();
+    `ALTER TABLE questions ADD COLUMN IF NOT EXISTS slug TEXT`,
+    `ALTER TABLE questions ADD COLUMN IF NOT EXISTS category TEXT`,
+    `ALTER TABLE questions ADD COLUMN IF NOT EXISTS difficulty VARCHAR(20) NOT NULL DEFAULT 'Medium'`,
+    `ALTER TABLE questions ADD COLUMN IF NOT EXISTS tags JSONB NOT NULL DEFAULT '[]'::jsonb`,
+    `ALTER TABLE questions ADD COLUMN IF NOT EXISTS description TEXT`,
+    `ALTER TABLE questions ADD COLUMN IF NOT EXISTS problem_statement TEXT`,
+    `ALTER TABLE questions ADD COLUMN IF NOT EXISTS input_format TEXT`,
+    `ALTER TABLE questions ADD COLUMN IF NOT EXISTS output_format TEXT`,
+    `ALTER TABLE questions ADD COLUMN IF NOT EXISTS constraints TEXT`,
+    `ALTER TABLE questions ADD COLUMN IF NOT EXISTS language VARCHAR(20) NOT NULL DEFAULT 'python'`,
+    `ALTER TABLE questions ADD COLUMN IF NOT EXISTS starter_code TEXT`,
+    `ALTER TABLE questions ADD COLUMN IF NOT EXISTS marks INTEGER NOT NULL DEFAULT 10`,
+    `ALTER TABLE questions ADD COLUMN IF NOT EXISTS time_limit_ms INTEGER NOT NULL DEFAULT 2500`,
+    `ALTER TABLE questions ADD COLUMN IF NOT EXISTS memory_limit_mb INTEGER NOT NULL DEFAULT 256`,
+    `ALTER TABLE questions ADD COLUMN IF NOT EXISTS created_at TIMESTAMP NOT NULL DEFAULT NOW()`,
+    `ALTER TABLE questions ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP NOT NULL DEFAULT NOW()`,
 
-    ALTER TABLE questions ADD COLUMN IF NOT EXISTS slug TEXT;
-    ALTER TABLE questions ADD COLUMN IF NOT EXISTS category TEXT;
-    ALTER TABLE questions ADD COLUMN IF NOT EXISTS difficulty VARCHAR(20) NOT NULL DEFAULT 'Medium';
-    ALTER TABLE questions ADD COLUMN IF NOT EXISTS tags JSONB NOT NULL DEFAULT '[]'::jsonb;
-    ALTER TABLE questions ADD COLUMN IF NOT EXISTS description TEXT;
-    ALTER TABLE questions ADD COLUMN IF NOT EXISTS problem_statement TEXT;
-    ALTER TABLE questions ADD COLUMN IF NOT EXISTS input_format TEXT;
-    ALTER TABLE questions ADD COLUMN IF NOT EXISTS output_format TEXT;
-    ALTER TABLE questions ADD COLUMN IF NOT EXISTS constraints TEXT;
-    ALTER TABLE questions ADD COLUMN IF NOT EXISTS language VARCHAR(20) NOT NULL DEFAULT 'python';
-    ALTER TABLE questions ADD COLUMN IF NOT EXISTS starter_code TEXT;
-    ALTER TABLE questions ADD COLUMN IF NOT EXISTS marks INTEGER NOT NULL DEFAULT 10;
-    ALTER TABLE questions ADD COLUMN IF NOT EXISTS time_limit_ms INTEGER NOT NULL DEFAULT 2500;
-    ALTER TABLE questions ADD COLUMN IF NOT EXISTS memory_limit_mb INTEGER NOT NULL DEFAULT 256;
-    ALTER TABLE questions ADD COLUMN IF NOT EXISTS created_at TIMESTAMP NOT NULL DEFAULT NOW();
-    ALTER TABLE questions ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP NOT NULL DEFAULT NOW();
+    `ALTER TABLE contest_participants ADD COLUMN IF NOT EXISTS account_id TEXT`,
+    `ALTER TABLE contest_participants ADD COLUMN IF NOT EXISTS college TEXT`,
+    `ALTER TABLE contest_participants ADD COLUMN IF NOT EXISTS status VARCHAR(30) NOT NULL DEFAULT 'active'`,
+    `ALTER TABLE contest_participants ADD COLUMN IF NOT EXISTS score INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE contest_participants ADD COLUMN IF NOT EXISTS solved_count INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE contest_participants ADD COLUMN IF NOT EXISTS completion_time_seconds INTEGER NOT NULL DEFAULT 0`,
 
-    ALTER TABLE contest_participants ADD COLUMN IF NOT EXISTS account_id TEXT;
-    ALTER TABLE contest_participants ADD COLUMN IF NOT EXISTS college TEXT;
-    ALTER TABLE contest_participants ADD COLUMN IF NOT EXISTS status VARCHAR(30) NOT NULL DEFAULT 'active';
-    ALTER TABLE contest_participants ADD COLUMN IF NOT EXISTS score INTEGER NOT NULL DEFAULT 0;
-    ALTER TABLE contest_participants ADD COLUMN IF NOT EXISTS solved_count INTEGER NOT NULL DEFAULT 0;
-    ALTER TABLE contest_participants ADD COLUMN IF NOT EXISTS completion_time_seconds INTEGER NOT NULL DEFAULT 0;
+    `CREATE INDEX IF NOT EXISTS idx_accounts_email ON accounts(email)`,
+    `CREATE INDEX IF NOT EXISTS idx_accounts_reg_no ON accounts(register_number)`,
+    `CREATE INDEX IF NOT EXISTS idx_accounts_participant_id ON accounts(participant_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_questions_difficulty ON questions(difficulty)`,
+    `CREATE INDEX IF NOT EXISTS idx_questions_language ON questions(language)`,
+    `CREATE INDEX IF NOT EXISTS idx_test_cases_question_id ON test_cases(question_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_contests_status ON contests(status)`,
+    `CREATE INDEX IF NOT EXISTS idx_contests_is_public ON contests(is_public)`,
+    `CREATE INDEX IF NOT EXISTS idx_cq_contest_id ON contest_questions(contest_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_cp_contest_id ON contest_participants(contest_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_cp_participant_id ON contest_participants(participant_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_submissions_contest_id ON submissions(contest_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_submissions_participant_id ON submissions(participant_id)`,
+  ];
 
-    CREATE INDEX IF NOT EXISTS idx_accounts_email ON accounts(email);
-    CREATE INDEX IF NOT EXISTS idx_accounts_reg_no ON accounts(register_number);
-    CREATE INDEX IF NOT EXISTS idx_accounts_participant_id ON accounts(participant_id);
-    CREATE INDEX IF NOT EXISTS idx_questions_difficulty ON questions(difficulty);
-    CREATE INDEX IF NOT EXISTS idx_questions_language ON questions(language);
-    CREATE INDEX IF NOT EXISTS idx_test_cases_question_id ON test_cases(question_id);
-    CREATE INDEX IF NOT EXISTS idx_contests_status ON contests(status);
-    CREATE INDEX IF NOT EXISTS idx_contests_is_public ON contests(is_public);
-    CREATE INDEX IF NOT EXISTS idx_cq_contest_id ON contest_questions(contest_id);
-    CREATE INDEX IF NOT EXISTS idx_cp_contest_id ON contest_participants(contest_id);
-    CREATE INDEX IF NOT EXISTS idx_cp_participant_id ON contest_participants(participant_id);
-    CREATE INDEX IF NOT EXISTS idx_submissions_contest_id ON submissions(contest_id);
-    CREATE INDEX IF NOT EXISTS idx_submissions_participant_id ON submissions(participant_id);
-  `;
-
-  await pool.query(ddl);
+  for (const stmt of statements) {
+    try {
+      await pool.query(stmt);
+    } catch (e: any) {
+      console.warn('Notice executing DDL migration statement:', stmt.slice(0, 40), e?.message);
+    }
+  }
 }
 
 export async function seedDatabase() {

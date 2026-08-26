@@ -1,6 +1,7 @@
 import bcrypt from 'bcryptjs';
 import { and, eq } from 'drizzle-orm';
 import { db } from '../src/db/index';
+import { seedDatabase } from '../src/db/seed';
 import {
   accounts,
   admins,
@@ -24,6 +25,18 @@ import {
 
 export class DatabaseStore {
   private sseClients: Set<(data: string) => void> = new Set();
+  private isInitialized = false;
+
+  public async ensureInitialized() {
+    if (!this.isInitialized) {
+      try {
+        await seedDatabase();
+        this.isInitialized = true;
+      } catch (err) {
+        console.error('DatabaseStore initialization notice:', err);
+      }
+    }
+  }
 
   // SSE Subscriptions
   public subscribeSSE(sendFn: (data: string) => void) {
@@ -44,6 +57,7 @@ export class DatabaseStore {
 
   // ================= ADMIN AUTHENTICATION ================= //
   public async verifyAdminPassword(inputPass: string): Promise<boolean> {
+    await this.ensureInitialized();
     const adminRows = await db
       .select()
       .from(admins)
@@ -61,7 +75,17 @@ export class DatabaseStore {
 
   // ================= CONTESTS API ================= //
   public async getAllContests(): Promise<Contest[]> {
-    const allContests = await db.select().from(contests);
+    await this.ensureInitialized();
+    let allContests = await db.select().from(contests);
+
+    // If database is empty, seed initial contests once
+    if (allContests.length === 0) {
+      try {
+        await seedDatabase();
+        allContests = await db.select().from(contests);
+      } catch (_) {}
+    }
+
     const result: Contest[] = [];
 
     for (const c of allContests) {
@@ -96,7 +120,9 @@ export class DatabaseStore {
         designedBy: c.designedBy,
         status: c.status as any,
         durationMinutes: c.durationMinutes,
+        startDate: c.startDate || undefined,
         startTime: c.startTime ? parseInt(c.startTime, 10) : undefined,
+        endDate: c.endDate || undefined,
         endTime: c.endTime ? parseInt(c.endTime, 10) : undefined,
         isPublic: c.isPublic,
         allowRegistration: c.allowRegistration,
@@ -121,6 +147,7 @@ export class DatabaseStore {
   }
 
   public async getContest(id: string): Promise<Contest | undefined> {
+    await this.ensureInitialized();
     const cRows = await db.select().from(contests).where(eq(contests.id, id)).limit(1);
     if (cRows.length === 0) return undefined;
 
@@ -153,7 +180,9 @@ export class DatabaseStore {
       designedBy: c.designedBy,
       status: c.status as any,
       durationMinutes: c.durationMinutes,
+      startDate: c.startDate || undefined,
       startTime: c.startTime ? parseInt(c.startTime, 10) : undefined,
+      endDate: c.endDate || undefined,
       endTime: c.endTime ? parseInt(c.endTime, 10) : undefined,
       isPublic: c.isPublic,
       allowRegistration: c.allowRegistration,
@@ -170,6 +199,7 @@ export class DatabaseStore {
   }
 
   public async saveContest(contestData: Contest): Promise<Contest> {
+    await this.ensureInitialized();
     const existing = await db
       .select()
       .from(contests)
@@ -199,7 +229,9 @@ export class DatabaseStore {
         designedBy: contestData.designedBy || 'Aegis',
         status: contestData.status || 'draft',
         durationMinutes: contestData.durationMinutes || 45,
+        startDate: contestData.startDate || null,
         startTime: contestData.startTime ? String(contestData.startTime) : null,
+        endDate: contestData.endDate || null,
         endTime: contestData.endTime ? String(contestData.endTime) : null,
         isPublic: contestData.isPublic !== false,
         allowRegistration: contestData.allowRegistration !== false,
@@ -220,7 +252,9 @@ export class DatabaseStore {
           designedBy: contestData.designedBy || 'Aegis',
           status: contestData.status || 'draft',
           durationMinutes: contestData.durationMinutes || 45,
+          startDate: contestData.startDate || null,
           startTime: contestData.startTime ? String(contestData.startTime) : null,
+          endDate: contestData.endDate || null,
           endTime: contestData.endTime ? String(contestData.endTime) : null,
           isPublic: contestData.isPublic !== false,
           allowRegistration: contestData.allowRegistration !== false,

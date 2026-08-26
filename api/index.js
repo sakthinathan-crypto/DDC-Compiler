@@ -9,8 +9,8 @@ import express from "express";
 import * as path3 from "path";
 
 // server/dbStore.ts
-import bcrypt from "bcryptjs";
-import { and, eq } from "drizzle-orm";
+import bcrypt2 from "bcryptjs";
+import { and as and2, eq as eq2 } from "drizzle-orm";
 
 // src/db/index.ts
 import { drizzle } from "drizzle-orm/node-postgres";
@@ -304,922 +304,11 @@ var createPool = () => {
 var pool = createPool();
 var db = drizzle(pool, { schema: schema_exports });
 
-// server/dbStore.ts
-var DatabaseStore = class {
-  constructor() {
-    this.sseClients = /* @__PURE__ */ new Set();
-  }
-  // SSE Subscriptions
-  subscribeSSE(sendFn) {
-    this.sseClients.add(sendFn);
-    return () => {
-      this.sseClients.delete(sendFn);
-    };
-  }
-  broadcast(event, payload) {
-    const message = `event: ${event}
-data: ${JSON.stringify(payload)}
-
-`;
-    for (const sendFn of this.sseClients) {
-      try {
-        sendFn(message);
-      } catch (_) {
-      }
-    }
-  }
-  // ================= ADMIN AUTHENTICATION ================= //
-  async verifyAdminPassword(inputPass) {
-    const adminRows = await db.select().from(admins).where(eq(admins.username, "admin")).limit(1);
-    if (adminRows.length > 0) {
-      const match = await bcrypt.compare(inputPass, adminRows[0].passwordHash);
-      if (match) return true;
-    }
-    const envPass = process.env.ADMIN_PASSWORD || "aegis2026";
-    return inputPass === envPass || inputPass === "aegis2026" || inputPass === "admin";
-  }
-  // ================= CONTESTS API ================= //
-  async getAllContests() {
-    const allContests = await db.select().from(contests);
-    const result = [];
-    for (const c of allContests) {
-      const cqs = await db.select().from(contestQuestions).where(eq(contestQuestions.contestId, c.id)).orderBy(contestQuestions.displayOrder);
-      const qIds = cqs.map((link) => link.questionId);
-      const pRows = await db.select().from(contestParticipants).where(eq(contestParticipants.contestId, c.id));
-      const sRows = await db.select().from(submissions).where(eq(submissions.contestId, c.id));
-      result.push({
-        id: c.id,
-        title: c.title,
-        tagline: c.tagline || "",
-        description: c.description || "",
-        rules: c.rules || [],
-        organization: c.organization,
-        designedBy: c.designedBy,
-        status: c.status,
-        durationMinutes: c.durationMinutes,
-        startTime: c.startTime ? parseInt(c.startTime, 10) : void 0,
-        endTime: c.endTime ? parseInt(c.endTime, 10) : void 0,
-        isPublic: c.isPublic,
-        allowRegistration: c.allowRegistration,
-        questionIds: qIds.length > 0 ? qIds : Object.keys(c.questionSnapshots || {}),
-        totalMarks: c.totalMarks,
-        totalQuestions: qIds.length > 0 ? qIds.length : c.totalQuestions,
-        participantCount: pRows.length,
-        submissionCount: sRows.length,
-        customQuestionMarks: c.customQuestionMarks || {},
-        questionSnapshots: c.questionSnapshots || {},
-        createdAt: c.createdAt.getTime(),
-        updatedAt: c.updatedAt.getTime()
-      });
-    }
-    return result.sort((a, b) => a.title.localeCompare(b.title));
-  }
-  async getPublicContests() {
-    const all = await this.getAllContests();
-    return all.filter((c) => c.isPublic && c.status !== "draft");
-  }
-  async getContest(id) {
-    const cRows = await db.select().from(contests).where(eq(contests.id, id)).limit(1);
-    if (cRows.length === 0) return void 0;
-    const c = cRows[0];
-    const cqs = await db.select().from(contestQuestions).where(eq(contestQuestions.contestId, c.id)).orderBy(contestQuestions.displayOrder);
-    const qIds = cqs.map((link) => link.questionId);
-    const pRows = await db.select().from(contestParticipants).where(eq(contestParticipants.contestId, c.id));
-    const sRows = await db.select().from(submissions).where(eq(submissions.contestId, c.id));
-    return {
-      id: c.id,
-      title: c.title,
-      tagline: c.tagline || "",
-      description: c.description || "",
-      rules: c.rules || [],
-      organization: c.organization,
-      designedBy: c.designedBy,
-      status: c.status,
-      durationMinutes: c.durationMinutes,
-      startTime: c.startTime ? parseInt(c.startTime, 10) : void 0,
-      endTime: c.endTime ? parseInt(c.endTime, 10) : void 0,
-      isPublic: c.isPublic,
-      allowRegistration: c.allowRegistration,
-      questionIds: qIds.length > 0 ? qIds : Object.keys(c.questionSnapshots || {}),
-      totalMarks: c.totalMarks,
-      totalQuestions: qIds.length > 0 ? qIds.length : c.totalQuestions,
-      participantCount: pRows.length,
-      submissionCount: sRows.length,
-      customQuestionMarks: c.customQuestionMarks || {},
-      questionSnapshots: c.questionSnapshots || {},
-      createdAt: c.createdAt.getTime(),
-      updatedAt: c.updatedAt.getTime()
-    };
-  }
-  async saveContest(contestData) {
-    const existing = await db.select().from(contests).where(eq(contests.id, contestData.id)).limit(1);
-    let totalMarks = 0;
-    const qIds = contestData.questionIds || [];
-    for (const qId of qIds) {
-      if (contestData.customQuestionMarks && contestData.customQuestionMarks[qId] !== void 0) {
-        totalMarks += contestData.customQuestionMarks[qId];
-      } else {
-        const q = await this.getBankQuestion(qId);
-        if (q) totalMarks += q.marks;
-      }
-    }
-    if (existing.length === 0) {
-      await db.insert(contests).values({
-        id: contestData.id,
-        title: contestData.title,
-        tagline: contestData.tagline || "",
-        description: contestData.description || "",
-        rules: contestData.rules || [],
-        organization: contestData.organization || "Designers Domain Club",
-        designedBy: contestData.designedBy || "Aegis",
-        status: contestData.status || "draft",
-        durationMinutes: contestData.durationMinutes || 45,
-        startTime: contestData.startTime ? String(contestData.startTime) : null,
-        endTime: contestData.endTime ? String(contestData.endTime) : null,
-        isPublic: contestData.isPublic !== false,
-        allowRegistration: contestData.allowRegistration !== false,
-        totalMarks: totalMarks || contestData.totalMarks || 50,
-        totalQuestions: qIds.length,
-        customQuestionMarks: contestData.customQuestionMarks || {},
-        questionSnapshots: contestData.questionSnapshots || {}
-      });
-    } else {
-      await db.update(contests).set({
-        title: contestData.title,
-        tagline: contestData.tagline || "",
-        description: contestData.description || "",
-        rules: contestData.rules || [],
-        organization: contestData.organization || "Designers Domain Club",
-        designedBy: contestData.designedBy || "Aegis",
-        status: contestData.status || "draft",
-        durationMinutes: contestData.durationMinutes || 45,
-        startTime: contestData.startTime ? String(contestData.startTime) : null,
-        endTime: contestData.endTime ? String(contestData.endTime) : null,
-        isPublic: contestData.isPublic !== false,
-        allowRegistration: contestData.allowRegistration !== false,
-        totalMarks: totalMarks || contestData.totalMarks || 50,
-        totalQuestions: qIds.length,
-        customQuestionMarks: contestData.customQuestionMarks || {},
-        questionSnapshots: contestData.questionSnapshots || {},
-        updatedAt: /* @__PURE__ */ new Date()
-      }).where(eq(contests.id, contestData.id));
-    }
-    await db.delete(contestQuestions).where(eq(contestQuestions.contestId, contestData.id));
-    for (let i = 0; i < qIds.length; i++) {
-      const qId = qIds[i];
-      await db.insert(contestQuestions).values({
-        contestId: contestData.id,
-        questionId: qId,
-        displayOrder: i + 1,
-        marksOverride: contestData.customQuestionMarks ? contestData.customQuestionMarks[qId] : null
-      });
-    }
-    const saved = await this.getContest(contestData.id);
-    const publics = await this.getPublicContests();
-    this.broadcast("contests_updated", publics);
-    return saved;
-  }
-  async deleteContest(id) {
-    await db.delete(contests).where(eq(contests.id, id));
-    const publics = await this.getPublicContests();
-    this.broadcast("contests_updated", publics);
-    return true;
-  }
-  async duplicateContest(id) {
-    const orig = await this.getContest(id);
-    if (!orig) return void 0;
-    const newId = `${orig.id}-copy-${Date.now().toString(36)}`;
-    const copyData = {
-      ...orig,
-      id: newId,
-      title: `${orig.title} (Copy)`,
-      status: "draft",
-      createdAt: Date.now(),
-      updatedAt: Date.now()
-    };
-    return this.saveContest(copyData);
-  }
-  async publishContest(id) {
-    const contest = await this.getContest(id);
-    if (!contest) return void 0;
-    const snapshots = {};
-    for (const qId of contest.questionIds) {
-      const fullQ = await this.getBankQuestion(qId);
-      if (fullQ) {
-        snapshots[qId] = fullQ;
-      }
-    }
-    await db.update(contests).set({
-      status: "active",
-      isPublic: true,
-      allowRegistration: true,
-      questionSnapshots: snapshots,
-      updatedAt: /* @__PURE__ */ new Date()
-    }).where(eq(contests.id, id));
-    const updated = await this.getContest(id);
-    const publics = await this.getPublicContests();
-    this.broadcast("contests_updated", publics);
-    return updated;
-  }
-  // ================= QUESTION BANK API ================= //
-  async getAllBankQuestions() {
-    const qRows = await db.select().from(questions);
-    const result = [];
-    for (const q of qRows) {
-      const tests = await db.select().from(testCases).where(eq(testCases.questionId, q.id)).orderBy(testCases.orderIndex);
-      const sampleTestCases = tests.filter((t) => t.isSample).map((t) => ({
-        id: t.id,
-        input: t.input,
-        expectedOutput: t.expectedOutput,
-        isSample: true,
-        marks: t.marks,
-        explanation: t.explanation || void 0
-      }));
-      const hiddenTestCases = tests.filter((t) => !t.isSample).map((t) => ({
-        id: t.id,
-        input: t.input,
-        expectedOutput: t.expectedOutput,
-        isSample: false,
-        marks: t.marks,
-        explanation: t.explanation || void 0
-      }));
-      result.push({
-        id: q.id,
-        title: q.title,
-        slug: q.slug || q.id,
-        category: q.category || void 0,
-        difficulty: q.difficulty,
-        tags: q.tags || [],
-        description: q.description || "",
-        problemStatement: q.problemStatement,
-        inputFormat: q.inputFormat || "",
-        outputFormat: q.outputFormat || "",
-        constraints: q.constraints || "",
-        language: q.language,
-        starterCode: q.starterCode,
-        marks: q.marks,
-        timeLimitMs: q.timeLimitMs,
-        sampleTestCases,
-        hiddenTestCases
-      });
-    }
-    return result.sort((a, b) => a.title.localeCompare(b.title));
-  }
-  async getBankQuestion(id) {
-    const qRows = await db.select().from(questions).where(eq(questions.id, id)).limit(1);
-    if (qRows.length === 0) return void 0;
-    const q = qRows[0];
-    const tests = await db.select().from(testCases).where(eq(testCases.questionId, q.id)).orderBy(testCases.orderIndex);
-    const sampleTestCases = tests.filter((t) => t.isSample).map((t) => ({
-      id: t.id,
-      input: t.input,
-      expectedOutput: t.expectedOutput,
-      isSample: true,
-      marks: t.marks,
-      explanation: t.explanation || void 0
-    }));
-    const hiddenTestCases = tests.filter((t) => !t.isSample).map((t) => ({
-      id: t.id,
-      input: t.input,
-      expectedOutput: t.expectedOutput,
-      isSample: false,
-      marks: t.marks,
-      explanation: t.explanation || void 0
-    }));
-    return {
-      id: q.id,
-      title: q.title,
-      slug: q.slug || q.id,
-      category: q.category || void 0,
-      difficulty: q.difficulty,
-      tags: q.tags || [],
-      description: q.description || "",
-      problemStatement: q.problemStatement,
-      inputFormat: q.inputFormat || "",
-      outputFormat: q.outputFormat || "",
-      constraints: q.constraints || "",
-      language: q.language,
-      starterCode: q.starterCode,
-      marks: q.marks,
-      timeLimitMs: q.timeLimitMs,
-      sampleTestCases,
-      hiddenTestCases
-    };
-  }
-  async saveBankQuestion(qData) {
-    await db.insert(questions).values({
-      id: qData.id,
-      title: qData.title,
-      slug: qData.slug || qData.id,
-      category: qData.category || "General",
-      difficulty: qData.difficulty || "Medium",
-      tags: qData.tags || [],
-      description: qData.description || "",
-      problemStatement: qData.problemStatement,
-      inputFormat: qData.inputFormat || "",
-      outputFormat: qData.outputFormat || "",
-      constraints: qData.constraints || "",
-      language: qData.language,
-      starterCode: qData.starterCode,
-      marks: qData.marks || 10,
-      timeLimitMs: qData.timeLimitMs || 2500,
-      memoryLimitMb: 256,
-      updatedAt: /* @__PURE__ */ new Date()
-    }).onConflictDoUpdate({
-      target: questions.id,
-      set: {
-        title: qData.title,
-        slug: qData.slug || qData.id,
-        category: qData.category || "General",
-        difficulty: qData.difficulty || "Medium",
-        tags: qData.tags || [],
-        description: qData.description || "",
-        problemStatement: qData.problemStatement,
-        inputFormat: qData.inputFormat || "",
-        outputFormat: qData.outputFormat || "",
-        constraints: qData.constraints || "",
-        language: qData.language,
-        starterCode: qData.starterCode,
-        marks: qData.marks || 10,
-        timeLimitMs: qData.timeLimitMs || 2500,
-        updatedAt: /* @__PURE__ */ new Date()
-      }
-    });
-    await db.delete(testCases).where(eq(testCases.questionId, qData.id));
-    const allTests = [
-      ...(qData.sampleTestCases || []).map((t, idx) => ({ ...t, isSample: true, orderIndex: idx })),
-      ...(qData.hiddenTestCases || []).map((t, idx) => ({
-        ...t,
-        isSample: false,
-        orderIndex: (qData.sampleTestCases?.length || 0) + idx
-      }))
-    ];
-    for (const t of allTests) {
-      await db.insert(testCases).values({
-        id: t.id || `${qData.id}-test-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-        questionId: qData.id,
-        input: t.input,
-        expectedOutput: t.expectedOutput,
-        isSample: t.isSample,
-        marks: Math.round(t.marks || 0),
-        explanation: t.explanation || null,
-        orderIndex: t.orderIndex
-      });
-    }
-    return await this.getBankQuestion(qData.id);
-  }
-  async deleteBankQuestion(id) {
-    await db.delete(questions).where(eq(questions.id, id));
-    return true;
-  }
-  // ================= CONTEST QUESTIONS RESOLVER ================= //
-  async getContestFullQuestion(contestId, questionId) {
-    const contest = await this.getContest(contestId);
-    if (contest && contest.questionSnapshots && contest.questionSnapshots[questionId]) {
-      return contest.questionSnapshots[questionId];
-    }
-    return this.getBankQuestion(questionId);
-  }
-  async getContestPublicQuestions(contestId) {
-    const contest = await this.getContest(contestId);
-    if (!contest) return [];
-    const publicQuestions = [];
-    for (const qId of contest.questionIds) {
-      const fullQ = await this.getContestFullQuestion(contestId, qId);
-      if (!fullQ) continue;
-      const marks = contest.customQuestionMarks && contest.customQuestionMarks[qId] !== void 0 ? contest.customQuestionMarks[qId] : fullQ.marks;
-      publicQuestions.push({
-        id: fullQ.id,
-        title: fullQ.title,
-        slug: fullQ.slug,
-        category: fullQ.category,
-        difficulty: fullQ.difficulty,
-        tags: fullQ.tags,
-        description: fullQ.description || "",
-        problemStatement: fullQ.problemStatement,
-        inputFormat: fullQ.inputFormat || "",
-        outputFormat: fullQ.outputFormat || "",
-        constraints: fullQ.constraints || "",
-        language: fullQ.language,
-        starterCode: fullQ.starterCode,
-        marks,
-        timeLimitMs: fullQ.timeLimitMs,
-        sampleTestCases: fullQ.sampleTestCases || []
-      });
-    }
-    return publicQuestions;
-  }
-  // ================= PARTICIPANT ACCOUNTS ================= //
-  async registerAccount(data) {
-    const cleanReg = data.registerNumber.trim().toUpperCase();
-    const cleanEmail = data.email.trim().toLowerCase();
-    const existingReg = await db.select().from(accounts).where(eq(accounts.registerNumber, cleanReg)).limit(1);
-    if (existingReg.length > 0) {
-      throw new Error(`Register Number "${cleanReg}" is already registered. Please log in.`);
-    }
-    const existingEmail = await db.select().from(accounts).where(eq(accounts.email, cleanEmail)).limit(1);
-    if (existingEmail.length > 0) {
-      throw new Error(`Email address "${cleanEmail}" is already registered. Please log in.`);
-    }
-    const allAccounts = await db.select().from(accounts);
-    const count = allAccounts.length + 1;
-    const participantId = `DDC-2026-${String(count).padStart(3, "0")}`;
-    const accountId = `acc_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-    const hashedPassword = await bcrypt.hash(data.password, 10);
-    const now = Date.now();
-    await db.insert(accounts).values({
-      id: accountId,
-      participantId,
-      name: data.name.trim(),
-      registerNumber: cleanReg,
-      mobile: data.mobile.trim(),
-      email: cleanEmail,
-      department: data.department.trim(),
-      year: data.year.trim(),
-      college: data.college.trim(),
-      passwordHash: hashedPassword
-    });
-    return {
-      id: accountId,
-      participantId,
-      name: data.name.trim(),
-      registerNumber: cleanReg,
-      mobile: data.mobile.trim(),
-      email: cleanEmail,
-      department: data.department.trim(),
-      year: data.year.trim(),
-      college: data.college.trim(),
-      createdAt: now,
-      updatedAt: now
-    };
-  }
-  async loginAccount(identifier, pass) {
-    const clean = identifier.trim();
-    const cleanUpper = clean.toUpperCase();
-    const cleanLower = clean.toLowerCase();
-    const rows = await db.select().from(accounts);
-    const found = rows.find(
-      (a) => a.email.toLowerCase() === cleanLower || a.registerNumber.toUpperCase() === cleanUpper || a.participantId.toUpperCase() === cleanUpper
-    );
-    if (!found) {
-      const err = new Error("No registered account found with that email or ID.");
-      err.code = "ACCOUNT_NOT_FOUND";
-      throw err;
-    }
-    const isValid = await bcrypt.compare(pass, found.passwordHash);
-    if (!isValid) {
-      const err = new Error("Invalid account password.");
-      err.code = "INVALID_CREDENTIALS";
-      throw err;
-    }
-    return {
-      id: found.id,
-      participantId: found.participantId,
-      name: found.name,
-      registerNumber: found.registerNumber,
-      mobile: found.mobile,
-      email: found.email,
-      department: found.department,
-      year: found.year,
-      college: found.college,
-      createdAt: found.createdAt.getTime(),
-      updatedAt: found.updatedAt.getTime()
-    };
-  }
-  async getAccountByParticipantId(pId) {
-    const rows = await db.select().from(accounts).where(eq(accounts.participantId, pId.toUpperCase())).limit(1);
-    if (rows.length === 0) return void 0;
-    const a = rows[0];
-    return {
-      id: a.id,
-      participantId: a.participantId,
-      name: a.name,
-      registerNumber: a.registerNumber,
-      mobile: a.mobile,
-      email: a.email,
-      department: a.department,
-      year: a.year,
-      college: a.college,
-      createdAt: a.createdAt.getTime(),
-      updatedAt: a.updatedAt.getTime()
-    };
-  }
-  async updateAccount(pId, updates) {
-    const account = await this.getAccountByParticipantId(pId);
-    if (!account) throw new Error("Account not found");
-    await db.update(accounts).set({
-      name: updates.name || account.name,
-      mobile: updates.mobile || account.mobile,
-      department: updates.department || account.department,
-      year: updates.year || account.year,
-      college: updates.college || account.college,
-      updatedAt: /* @__PURE__ */ new Date()
-    }).where(eq(accounts.participantId, account.participantId));
-    await db.update(contestParticipants).set({
-      name: updates.name || account.name,
-      department: updates.department || account.department,
-      year: updates.year || account.year,
-      college: updates.college || account.college,
-      updatedAt: /* @__PURE__ */ new Date()
-    }).where(eq(contestParticipants.participantId, account.participantId));
-    return await this.getAccountByParticipantId(pId);
-  }
-  // ================= CONTEST PARTICIPANTS & SESSIONS ================= //
-  async joinContestWithAccount(contestId, participantId) {
-    const contest = await this.getContest(contestId);
-    if (!contest) throw new Error("Contest not found");
-    if (!contest.allowRegistration && contest.status !== "active") {
-      throw new Error("Registration for this contest is currently closed.");
-    }
-    const account = await this.getAccountByParticipantId(participantId);
-    if (!account) throw new Error("Account profile not found.");
-    const sessionKey = `${contestId}:${account.participantId}`;
-    const pRows = await db.select().from(contestParticipants).where(eq(contestParticipants.id, sessionKey)).limit(1);
-    if (pRows.length > 0) {
-      const p = pRows[0];
-      const part = {
-        id: p.id,
-        contestId: p.contestId,
-        participantId: p.participantId,
-        name: p.name,
-        registerNumber: p.registerNumber,
-        email: p.email,
-        department: p.department,
-        year: p.year,
-        college: p.college || void 0,
-        createdAt: p.registeredAt.getTime(),
-        startTime: parseInt(p.startTime, 10),
-        endTime: p.endTime ? parseInt(p.endTime, 10) : void 0,
-        status: p.status,
-        totalScore: p.score,
-        solvedCount: p.solvedCount,
-        completionTimeSeconds: p.completionTimeSeconds
-      };
-      const timeRemaining2 = await this.getParticipantTimeRemainingSeconds(
-        contestId,
-        part.participantId
-      );
-      return { participant: part, isNew: false, timeRemainingSeconds: timeRemaining2 };
-    }
-    const now = Date.now();
-    const newParticipant = {
-      id: sessionKey,
-      contestId,
-      participantId: account.participantId,
-      name: account.name,
-      registerNumber: account.registerNumber,
-      email: account.email,
-      department: account.department,
-      year: account.year,
-      college: account.college,
-      createdAt: now,
-      startTime: now,
-      status: "active",
-      totalScore: 0,
-      solvedCount: 0,
-      completionTimeSeconds: 0
-    };
-    await db.insert(contestParticipants).values({
-      id: sessionKey,
-      contestId,
-      participantId: account.participantId,
-      accountId: account.id,
-      name: account.name,
-      registerNumber: account.registerNumber,
-      email: account.email,
-      department: account.department,
-      year: account.year,
-      college: account.college,
-      startTime: String(newParticipant.startTime),
-      status: "active",
-      score: 0,
-      solvedCount: 0,
-      completionTimeSeconds: 0
-    });
-    const timeRemaining = await this.getParticipantTimeRemainingSeconds(
-      contestId,
-      newParticipant.participantId
-    );
-    this.broadcast("participant_registered", { contestId, participant: newParticipant });
-    return {
-      participant: newParticipant,
-      isNew: true,
-      timeRemainingSeconds: timeRemaining
-    };
-  }
-  async registerParticipant(contestId, data) {
-    const sessionKey = `${contestId}:${data.participantId}`;
-    const pRows = await db.select().from(contestParticipants).where(eq(contestParticipants.id, sessionKey)).limit(1);
-    if (pRows.length > 0) {
-      const p = pRows[0];
-      return {
-        participant: {
-          id: p.id,
-          contestId: p.contestId,
-          participantId: p.participantId,
-          name: p.name,
-          registerNumber: p.registerNumber,
-          email: p.email,
-          department: p.department,
-          year: p.year,
-          college: p.college || void 0,
-          createdAt: p.registeredAt.getTime(),
-          startTime: parseInt(p.startTime, 10),
-          endTime: p.endTime ? parseInt(p.endTime, 10) : void 0,
-          status: p.status,
-          totalScore: p.score,
-          solvedCount: p.solvedCount,
-          completionTimeSeconds: p.completionTimeSeconds
-        },
-        isNew: false
-      };
-    }
-    const now = Date.now();
-    const newPart = {
-      id: sessionKey,
-      contestId,
-      participantId: data.participantId,
-      name: data.name,
-      registerNumber: data.registerNumber,
-      email: data.email,
-      department: data.department,
-      year: data.year,
-      createdAt: now,
-      startTime: now,
-      status: "active",
-      totalScore: 0,
-      solvedCount: 0,
-      completionTimeSeconds: 0
-    };
-    await db.insert(contestParticipants).values({
-      id: sessionKey,
-      contestId,
-      participantId: data.participantId,
-      name: data.name,
-      registerNumber: data.registerNumber,
-      email: data.email,
-      department: data.department,
-      year: data.year,
-      startTime: String(newPart.startTime),
-      status: "active",
-      score: 0,
-      solvedCount: 0,
-      completionTimeSeconds: 0
-    });
-    return { participant: newPart, isNew: true };
-  }
-  async getParticipant(contestId, participantId) {
-    const sessionKey = `${contestId}:${participantId}`;
-    const pRows = await db.select().from(contestParticipants).where(eq(contestParticipants.id, sessionKey)).limit(1);
-    if (pRows.length === 0) return void 0;
-    const p = pRows[0];
-    return {
-      id: p.id,
-      contestId: p.contestId,
-      participantId: p.participantId,
-      name: p.name,
-      registerNumber: p.registerNumber,
-      email: p.email,
-      department: p.department,
-      year: p.year,
-      college: p.college || void 0,
-      createdAt: p.registeredAt.getTime(),
-      startTime: parseInt(p.startTime, 10),
-      endTime: p.endTime ? parseInt(p.endTime, 10) : void 0,
-      status: p.status,
-      totalScore: p.score,
-      solvedCount: p.solvedCount,
-      completionTimeSeconds: p.completionTimeSeconds
-    };
-  }
-  async updateParticipant(contestId, participantId, updates) {
-    const sessionKey = `${contestId}:${participantId}`;
-    const p = await this.getParticipant(contestId, participantId);
-    if (!p) return void 0;
-    const updated = { ...p, ...updates };
-    await db.update(contestParticipants).set({
-      name: updated.name,
-      startTime: String(updated.startTime),
-      endTime: updated.endTime ? String(updated.endTime) : null,
-      status: updated.status,
-      score: updated.totalScore,
-      solvedCount: updated.solvedCount,
-      completionTimeSeconds: updated.completionTimeSeconds,
-      updatedAt: /* @__PURE__ */ new Date()
-    }).where(eq(contestParticipants.id, sessionKey));
-    const leaderboard = await this.getContestLeaderboard(contestId);
-    this.broadcast("leaderboard_updated", { contestId, leaderboard });
-    return updated;
-  }
-  async getAllParticipants(contestId) {
-    const rows = await db.select().from(contestParticipants).where(eq(contestParticipants.contestId, contestId));
-    return rows.map((p) => ({
-      id: p.id,
-      contestId: p.contestId,
-      participantId: p.participantId,
-      name: p.name,
-      registerNumber: p.registerNumber,
-      email: p.email,
-      department: p.department,
-      year: p.year,
-      college: p.college || void 0,
-      createdAt: p.registeredAt.getTime(),
-      startTime: parseInt(p.startTime, 10),
-      endTime: p.endTime ? parseInt(p.endTime, 10) : void 0,
-      status: p.status,
-      totalScore: p.score,
-      solvedCount: p.solvedCount,
-      completionTimeSeconds: p.completionTimeSeconds
-    }));
-  }
-  async getParticipantTimeRemainingSeconds(contestId, participantId) {
-    const p = await this.getParticipant(contestId, participantId);
-    if (!p) return 0;
-    if (p.status === "completed" || p.status === "disqualified") return 0;
-    const contest = await this.getContest(contestId);
-    const durationMinutes = contest ? contest.durationMinutes : 45;
-    const totalDurationSeconds = durationMinutes * 60;
-    const elapsedSeconds = Math.floor((Date.now() - p.startTime) / 1e3);
-    const remaining = totalDurationSeconds - elapsedSeconds;
-    return Math.max(0, remaining);
-  }
-  // ================= SUBMISSIONS & SCORING ================= //
-  async addSubmission(submission) {
-    await db.insert(submissions).values({
-      id: submission.id,
-      contestId: submission.contestId,
-      participantId: submission.participantId,
-      participantName: submission.participantName,
-      questionId: submission.questionId,
-      questionTitle: submission.questionTitle,
-      language: submission.language,
-      code: submission.code,
-      testsPassed: submission.testsPassed,
-      totalTests: submission.totalTests,
-      score: submission.score,
-      status: submission.status,
-      executionTimeMs: submission.executionTimeMs || 0,
-      compilerOutput: submission.compilerOutput || null,
-      testResults: submission.testResults || [],
-      submittedAt: String(submission.submittedAt)
-    });
-    const contestSubs = await db.select().from(submissions).where(
-      and(
-        eq(submissions.contestId, submission.contestId),
-        eq(submissions.participantId, submission.participantId)
-      )
-    );
-    const bestScores = {};
-    for (const sub of contestSubs) {
-      if (!bestScores[sub.questionId] || sub.score > bestScores[sub.questionId]) {
-        bestScores[sub.questionId] = sub.score;
-      }
-    }
-    const totalScore = Object.values(bestScores).reduce((acc, curr) => acc + curr, 0);
-    const p = await this.getParticipant(submission.contestId, submission.participantId);
-    if (p) {
-      const elapsed = Math.floor((Date.now() - p.startTime) / 1e3);
-      await this.updateParticipant(submission.contestId, submission.participantId, {
-        totalScore,
-        solvedCount: Object.keys(bestScores).filter((qId) => (bestScores[qId] || 0) > 0).length,
-        completionTimeSeconds: elapsed
-      });
-    }
-    this.broadcast("new_submission", submission);
-  }
-  async getSubmissions(contestId, participantId, questionId) {
-    let query = db.select().from(submissions);
-    const rows = await query;
-    let filtered = rows;
-    if (contestId) filtered = filtered.filter((s) => s.contestId === contestId);
-    if (participantId) filtered = filtered.filter((s) => s.participantId === participantId);
-    if (questionId) filtered = filtered.filter((s) => s.questionId === questionId);
-    return filtered.map((s) => ({
-      id: s.id,
-      contestId: s.contestId,
-      participantId: s.participantId,
-      participantName: s.participantName,
-      questionId: s.questionId,
-      questionTitle: s.questionTitle,
-      language: s.language,
-      code: s.code,
-      testsPassed: s.testsPassed,
-      totalTests: s.totalTests,
-      score: s.score,
-      status: s.status,
-      submittedAt: parseInt(s.submittedAt, 10),
-      executionTimeMs: s.executionTimeMs,
-      compilerOutput: s.compilerOutput || void 0,
-      testResults: s.testResults
-    })).sort((a, b) => b.submittedAt - a.submittedAt);
-  }
-  // ================= LEADERBOARD ================= //
-  async getContestLeaderboard(contestId) {
-    const contest = await this.getContest(contestId);
-    const totalQuestions = contest ? contest.questionIds.length : 5;
-    const pList = await this.getAllParticipants(contestId);
-    const entries = [];
-    for (const p of pList) {
-      const pSubs = await db.select().from(submissions).where(
-        and(eq(submissions.contestId, contestId), eq(submissions.participantId, p.participantId))
-      );
-      const questionBest = {};
-      let lastSubTime = p.startTime;
-      for (const s of pSubs) {
-        if (!questionBest[s.questionId] || s.score > questionBest[s.questionId]) {
-          questionBest[s.questionId] = s.score;
-        }
-        const sTime = parseInt(s.submittedAt, 10);
-        if (sTime > lastSubTime) {
-          lastSubTime = sTime;
-        }
-      }
-      const totalScore = Object.values(questionBest).reduce((a, b) => a + b, 0);
-      const completionSeconds = p.completionTimeSeconds && p.completionTimeSeconds > 0 ? p.completionTimeSeconds : Math.floor(((p.endTime || Date.now()) - p.startTime) / 1e3);
-      const mins = Math.floor(completionSeconds / 60);
-      const secs = completionSeconds % 60;
-      const timeDisplay = `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
-      entries.push({
-        rank: 0,
-        contestId,
-        participantId: p.participantId,
-        name: p.name,
-        registerNumber: p.registerNumber,
-        department: p.department,
-        year: p.year,
-        totalScore,
-        solvedCount: Object.keys(questionBest).filter((k) => (questionBest[k] || 0) > 0).length,
-        totalQuestions,
-        completionTimeSeconds: completionSeconds,
-        timeDisplay,
-        status: p.status,
-        lastSubmissionTime: lastSubTime,
-        questionScores: questionBest
-      });
-    }
-    entries.sort((a, b) => {
-      if (b.totalScore !== a.totalScore) {
-        return b.totalScore - a.totalScore;
-      }
-      return a.completionTimeSeconds - b.completionTimeSeconds;
-    });
-    entries.forEach((e, idx) => {
-      e.rank = idx + 1;
-    });
-    return entries;
-  }
-  // ================= PARTICIPANT RESULTS ================= //
-  async getParticipantResults(participantId) {
-    const pSessions = await db.select().from(contestParticipants).where(eq(contestParticipants.participantId, participantId));
-    const results = [];
-    for (const session of pSessions) {
-      const contest = await this.getContest(session.contestId);
-      if (!contest) continue;
-      const leaderboard = await this.getContestLeaderboard(session.contestId);
-      const myEntry = leaderboard.find((e) => e.participantId === participantId);
-      const subs = await db.select().from(submissions).where(
-        and(
-          eq(submissions.contestId, session.contestId),
-          eq(submissions.participantId, participantId)
-        )
-      );
-      const questionBest = {};
-      let totalQuestions = contest.questionIds.length;
-      for (const s of subs) {
-        if (!questionBest[s.questionId] || s.score > questionBest[s.questionId]) {
-          questionBest[s.questionId] = s.score;
-        }
-      }
-      const totalScore = Object.values(questionBest).reduce((a, b) => a + b, 0);
-      const solvedCount = Object.keys(questionBest).filter((k) => (questionBest[k] || 0) > 0).length;
-      const completionSeconds = session.completionTimeSeconds > 0 ? session.completionTimeSeconds : Math.floor(((session.endTime ? parseInt(session.endTime, 10) : Date.now()) - parseInt(session.startTime, 10)) / 1e3);
-      const mins = Math.floor(completionSeconds / 60);
-      const secs = completionSeconds % 60;
-      const timeDisplay = `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
-      results.push({
-        contestId: contest.id,
-        contestTitle: contest.title,
-        totalScore,
-        totalMarks: contest.totalMarks,
-        solvedCount,
-        totalQuestions,
-        rank: myEntry ? myEntry.rank : 1,
-        status: session.status,
-        completionTimeSeconds: completionSeconds,
-        timeDisplay,
-        lastSubmissionTime: subs.length > 0 ? parseInt(subs[subs.length - 1].submittedAt, 10) : Date.now()
-      });
-    }
-    return results;
-  }
-};
-var dbStore = new DatabaseStore();
-
 // src/db/seed.ts
-import bcrypt2 from "bcryptjs";
+import bcrypt from "bcryptjs";
 import * as fs from "fs";
 import * as path from "path";
-import { and as and2, eq as eq2 } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 
 // server/questionsData.ts
 var INITIAL_QUESTION_BANK = [
@@ -2742,17 +1831,16 @@ var INITIAL_CONTESTS = [
 
 // src/db/seed.ts
 async function createTablesIfNotExist() {
-  const ddl = `
-    CREATE TABLE IF NOT EXISTS admins (
+  const statements = [
+    `CREATE TABLE IF NOT EXISTS admins (
       id SERIAL PRIMARY KEY,
       username VARCHAR(100) NOT NULL UNIQUE,
       password_hash TEXT NOT NULL,
       role VARCHAR(50) NOT NULL DEFAULT 'superadmin',
       created_at TIMESTAMP NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMP NOT NULL DEFAULT NOW()
-    );
-
-    CREATE TABLE IF NOT EXISTS accounts (
+    )`,
+    `CREATE TABLE IF NOT EXISTS accounts (
       id TEXT PRIMARY KEY,
       participant_id VARCHAR(50) NOT NULL UNIQUE,
       name TEXT NOT NULL,
@@ -2765,9 +1853,8 @@ async function createTablesIfNotExist() {
       password_hash TEXT NOT NULL,
       created_at TIMESTAMP NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMP NOT NULL DEFAULT NOW()
-    );
-
-    CREATE TABLE IF NOT EXISTS questions (
+    )`,
+    `CREATE TABLE IF NOT EXISTS questions (
       id TEXT PRIMARY KEY,
       title TEXT NOT NULL,
       slug TEXT,
@@ -2786,9 +1873,8 @@ async function createTablesIfNotExist() {
       memory_limit_mb INTEGER NOT NULL DEFAULT 256,
       created_at TIMESTAMP NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMP NOT NULL DEFAULT NOW()
-    );
-
-    CREATE TABLE IF NOT EXISTS test_cases (
+    )`,
+    `CREATE TABLE IF NOT EXISTS test_cases (
       id TEXT PRIMARY KEY,
       question_id TEXT NOT NULL REFERENCES questions(id) ON DELETE CASCADE,
       input TEXT NOT NULL,
@@ -2798,9 +1884,8 @@ async function createTablesIfNotExist() {
       explanation TEXT,
       order_index INTEGER NOT NULL DEFAULT 0,
       created_at TIMESTAMP NOT NULL DEFAULT NOW()
-    );
-
-    CREATE TABLE IF NOT EXISTS contests (
+    )`,
+    `CREATE TABLE IF NOT EXISTS contests (
       id TEXT PRIMARY KEY,
       title TEXT NOT NULL,
       tagline TEXT,
@@ -2822,18 +1907,16 @@ async function createTablesIfNotExist() {
       question_snapshots JSONB NOT NULL DEFAULT '{}'::jsonb,
       created_at TIMESTAMP NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMP NOT NULL DEFAULT NOW()
-    );
-
-    CREATE TABLE IF NOT EXISTS contest_questions (
+    )`,
+    `CREATE TABLE IF NOT EXISTS contest_questions (
       id SERIAL PRIMARY KEY,
       contest_id TEXT NOT NULL REFERENCES contests(id) ON DELETE CASCADE,
       question_id TEXT NOT NULL REFERENCES questions(id) ON DELETE CASCADE,
       display_order INTEGER NOT NULL DEFAULT 0,
       marks_override INTEGER,
       created_at TIMESTAMP NOT NULL DEFAULT NOW()
-    );
-
-    CREATE TABLE IF NOT EXISTS contest_participants (
+    )`,
+    `CREATE TABLE IF NOT EXISTS contest_participants (
       id TEXT PRIMARY KEY,
       contest_id TEXT NOT NULL REFERENCES contests(id) ON DELETE CASCADE,
       participant_id VARCHAR(50) NOT NULL,
@@ -2852,9 +1935,8 @@ async function createTablesIfNotExist() {
       completion_time_seconds INTEGER NOT NULL DEFAULT 0,
       registered_at TIMESTAMP NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMP NOT NULL DEFAULT NOW()
-    );
-
-    CREATE TABLE IF NOT EXISTS submissions (
+    )`,
+    `CREATE TABLE IF NOT EXISTS submissions (
       id TEXT PRIMARY KEY,
       contest_id TEXT NOT NULL REFERENCES contests(id) ON DELETE CASCADE,
       participant_id VARCHAR(50) NOT NULL,
@@ -2872,68 +1954,70 @@ async function createTablesIfNotExist() {
       test_results JSONB NOT NULL DEFAULT '[]'::jsonb,
       submitted_at_epoch TEXT NOT NULL,
       created_at TIMESTAMP NOT NULL DEFAULT NOW()
-    );
-
-    -- Ensure missing columns are added if tables already existed with older schema
-    ALTER TABLE contests ADD COLUMN IF NOT EXISTS tagline TEXT;
-    ALTER TABLE contests ADD COLUMN IF NOT EXISTS description TEXT;
-    ALTER TABLE contests ADD COLUMN IF NOT EXISTS rules JSONB NOT NULL DEFAULT '[]'::jsonb;
-    ALTER TABLE contests ADD COLUMN IF NOT EXISTS organization TEXT NOT NULL DEFAULT 'Designers Domain Club';
-    ALTER TABLE contests ADD COLUMN IF NOT EXISTS designed_by TEXT NOT NULL DEFAULT 'Aegis';
-    ALTER TABLE contests ADD COLUMN IF NOT EXISTS status VARCHAR(30) NOT NULL DEFAULT 'draft';
-    ALTER TABLE contests ADD COLUMN IF NOT EXISTS duration_minutes INTEGER NOT NULL DEFAULT 45;
-    ALTER TABLE contests ADD COLUMN IF NOT EXISTS start_date TEXT;
-    ALTER TABLE contests ADD COLUMN IF NOT EXISTS start_time TEXT;
-    ALTER TABLE contests ADD COLUMN IF NOT EXISTS end_date TEXT;
-    ALTER TABLE contests ADD COLUMN IF NOT EXISTS end_time TEXT;
-    ALTER TABLE contests ADD COLUMN IF NOT EXISTS is_public BOOLEAN NOT NULL DEFAULT TRUE;
-    ALTER TABLE contests ADD COLUMN IF NOT EXISTS allow_registration BOOLEAN NOT NULL DEFAULT TRUE;
-    ALTER TABLE contests ADD COLUMN IF NOT EXISTS total_marks INTEGER NOT NULL DEFAULT 50;
-    ALTER TABLE contests ADD COLUMN IF NOT EXISTS total_questions INTEGER NOT NULL DEFAULT 5;
-    ALTER TABLE contests ADD COLUMN IF NOT EXISTS custom_question_marks JSONB NOT NULL DEFAULT '{}'::jsonb;
-    ALTER TABLE contests ADD COLUMN IF NOT EXISTS question_snapshots JSONB NOT NULL DEFAULT '{}'::jsonb;
-    ALTER TABLE contests ADD COLUMN IF NOT EXISTS created_at TIMESTAMP NOT NULL DEFAULT NOW();
-    ALTER TABLE contests ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP NOT NULL DEFAULT NOW();
-
-    ALTER TABLE questions ADD COLUMN IF NOT EXISTS slug TEXT;
-    ALTER TABLE questions ADD COLUMN IF NOT EXISTS category TEXT;
-    ALTER TABLE questions ADD COLUMN IF NOT EXISTS difficulty VARCHAR(20) NOT NULL DEFAULT 'Medium';
-    ALTER TABLE questions ADD COLUMN IF NOT EXISTS tags JSONB NOT NULL DEFAULT '[]'::jsonb;
-    ALTER TABLE questions ADD COLUMN IF NOT EXISTS description TEXT;
-    ALTER TABLE questions ADD COLUMN IF NOT EXISTS problem_statement TEXT;
-    ALTER TABLE questions ADD COLUMN IF NOT EXISTS input_format TEXT;
-    ALTER TABLE questions ADD COLUMN IF NOT EXISTS output_format TEXT;
-    ALTER TABLE questions ADD COLUMN IF NOT EXISTS constraints TEXT;
-    ALTER TABLE questions ADD COLUMN IF NOT EXISTS language VARCHAR(20) NOT NULL DEFAULT 'python';
-    ALTER TABLE questions ADD COLUMN IF NOT EXISTS starter_code TEXT;
-    ALTER TABLE questions ADD COLUMN IF NOT EXISTS marks INTEGER NOT NULL DEFAULT 10;
-    ALTER TABLE questions ADD COLUMN IF NOT EXISTS time_limit_ms INTEGER NOT NULL DEFAULT 2500;
-    ALTER TABLE questions ADD COLUMN IF NOT EXISTS memory_limit_mb INTEGER NOT NULL DEFAULT 256;
-    ALTER TABLE questions ADD COLUMN IF NOT EXISTS created_at TIMESTAMP NOT NULL DEFAULT NOW();
-    ALTER TABLE questions ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP NOT NULL DEFAULT NOW();
-
-    ALTER TABLE contest_participants ADD COLUMN IF NOT EXISTS account_id TEXT;
-    ALTER TABLE contest_participants ADD COLUMN IF NOT EXISTS college TEXT;
-    ALTER TABLE contest_participants ADD COLUMN IF NOT EXISTS status VARCHAR(30) NOT NULL DEFAULT 'active';
-    ALTER TABLE contest_participants ADD COLUMN IF NOT EXISTS score INTEGER NOT NULL DEFAULT 0;
-    ALTER TABLE contest_participants ADD COLUMN IF NOT EXISTS solved_count INTEGER NOT NULL DEFAULT 0;
-    ALTER TABLE contest_participants ADD COLUMN IF NOT EXISTS completion_time_seconds INTEGER NOT NULL DEFAULT 0;
-
-    CREATE INDEX IF NOT EXISTS idx_accounts_email ON accounts(email);
-    CREATE INDEX IF NOT EXISTS idx_accounts_reg_no ON accounts(register_number);
-    CREATE INDEX IF NOT EXISTS idx_accounts_participant_id ON accounts(participant_id);
-    CREATE INDEX IF NOT EXISTS idx_questions_difficulty ON questions(difficulty);
-    CREATE INDEX IF NOT EXISTS idx_questions_language ON questions(language);
-    CREATE INDEX IF NOT EXISTS idx_test_cases_question_id ON test_cases(question_id);
-    CREATE INDEX IF NOT EXISTS idx_contests_status ON contests(status);
-    CREATE INDEX IF NOT EXISTS idx_contests_is_public ON contests(is_public);
-    CREATE INDEX IF NOT EXISTS idx_cq_contest_id ON contest_questions(contest_id);
-    CREATE INDEX IF NOT EXISTS idx_cp_contest_id ON contest_participants(contest_id);
-    CREATE INDEX IF NOT EXISTS idx_cp_participant_id ON contest_participants(participant_id);
-    CREATE INDEX IF NOT EXISTS idx_submissions_contest_id ON submissions(contest_id);
-    CREATE INDEX IF NOT EXISTS idx_submissions_participant_id ON submissions(participant_id);
-  `;
-  await pool.query(ddl);
+    )`,
+    // Column Migrations (safe idempotent alter statements)
+    `ALTER TABLE contests ADD COLUMN IF NOT EXISTS tagline TEXT`,
+    `ALTER TABLE contests ADD COLUMN IF NOT EXISTS description TEXT`,
+    `ALTER TABLE contests ADD COLUMN IF NOT EXISTS rules JSONB NOT NULL DEFAULT '[]'::jsonb`,
+    `ALTER TABLE contests ADD COLUMN IF NOT EXISTS organization TEXT NOT NULL DEFAULT 'Designers Domain Club'`,
+    `ALTER TABLE contests ADD COLUMN IF NOT EXISTS designed_by TEXT NOT NULL DEFAULT 'Aegis'`,
+    `ALTER TABLE contests ADD COLUMN IF NOT EXISTS status VARCHAR(30) NOT NULL DEFAULT 'draft'`,
+    `ALTER TABLE contests ADD COLUMN IF NOT EXISTS duration_minutes INTEGER NOT NULL DEFAULT 45`,
+    `ALTER TABLE contests ADD COLUMN IF NOT EXISTS start_date TEXT`,
+    `ALTER TABLE contests ADD COLUMN IF NOT EXISTS start_time TEXT`,
+    `ALTER TABLE contests ADD COLUMN IF NOT EXISTS end_date TEXT`,
+    `ALTER TABLE contests ADD COLUMN IF NOT EXISTS end_time TEXT`,
+    `ALTER TABLE contests ADD COLUMN IF NOT EXISTS is_public BOOLEAN NOT NULL DEFAULT TRUE`,
+    `ALTER TABLE contests ADD COLUMN IF NOT EXISTS allow_registration BOOLEAN NOT NULL DEFAULT TRUE`,
+    `ALTER TABLE contests ADD COLUMN IF NOT EXISTS total_marks INTEGER NOT NULL DEFAULT 50`,
+    `ALTER TABLE contests ADD COLUMN IF NOT EXISTS total_questions INTEGER NOT NULL DEFAULT 5`,
+    `ALTER TABLE contests ADD COLUMN IF NOT EXISTS custom_question_marks JSONB NOT NULL DEFAULT '{}'::jsonb`,
+    `ALTER TABLE contests ADD COLUMN IF NOT EXISTS question_snapshots JSONB NOT NULL DEFAULT '{}'::jsonb`,
+    `ALTER TABLE contests ADD COLUMN IF NOT EXISTS created_at TIMESTAMP NOT NULL DEFAULT NOW()`,
+    `ALTER TABLE contests ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP NOT NULL DEFAULT NOW()`,
+    `ALTER TABLE questions ADD COLUMN IF NOT EXISTS slug TEXT`,
+    `ALTER TABLE questions ADD COLUMN IF NOT EXISTS category TEXT`,
+    `ALTER TABLE questions ADD COLUMN IF NOT EXISTS difficulty VARCHAR(20) NOT NULL DEFAULT 'Medium'`,
+    `ALTER TABLE questions ADD COLUMN IF NOT EXISTS tags JSONB NOT NULL DEFAULT '[]'::jsonb`,
+    `ALTER TABLE questions ADD COLUMN IF NOT EXISTS description TEXT`,
+    `ALTER TABLE questions ADD COLUMN IF NOT EXISTS problem_statement TEXT`,
+    `ALTER TABLE questions ADD COLUMN IF NOT EXISTS input_format TEXT`,
+    `ALTER TABLE questions ADD COLUMN IF NOT EXISTS output_format TEXT`,
+    `ALTER TABLE questions ADD COLUMN IF NOT EXISTS constraints TEXT`,
+    `ALTER TABLE questions ADD COLUMN IF NOT EXISTS language VARCHAR(20) NOT NULL DEFAULT 'python'`,
+    `ALTER TABLE questions ADD COLUMN IF NOT EXISTS starter_code TEXT`,
+    `ALTER TABLE questions ADD COLUMN IF NOT EXISTS marks INTEGER NOT NULL DEFAULT 10`,
+    `ALTER TABLE questions ADD COLUMN IF NOT EXISTS time_limit_ms INTEGER NOT NULL DEFAULT 2500`,
+    `ALTER TABLE questions ADD COLUMN IF NOT EXISTS memory_limit_mb INTEGER NOT NULL DEFAULT 256`,
+    `ALTER TABLE questions ADD COLUMN IF NOT EXISTS created_at TIMESTAMP NOT NULL DEFAULT NOW()`,
+    `ALTER TABLE questions ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP NOT NULL DEFAULT NOW()`,
+    `ALTER TABLE contest_participants ADD COLUMN IF NOT EXISTS account_id TEXT`,
+    `ALTER TABLE contest_participants ADD COLUMN IF NOT EXISTS college TEXT`,
+    `ALTER TABLE contest_participants ADD COLUMN IF NOT EXISTS status VARCHAR(30) NOT NULL DEFAULT 'active'`,
+    `ALTER TABLE contest_participants ADD COLUMN IF NOT EXISTS score INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE contest_participants ADD COLUMN IF NOT EXISTS solved_count INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE contest_participants ADD COLUMN IF NOT EXISTS completion_time_seconds INTEGER NOT NULL DEFAULT 0`,
+    `CREATE INDEX IF NOT EXISTS idx_accounts_email ON accounts(email)`,
+    `CREATE INDEX IF NOT EXISTS idx_accounts_reg_no ON accounts(register_number)`,
+    `CREATE INDEX IF NOT EXISTS idx_accounts_participant_id ON accounts(participant_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_questions_difficulty ON questions(difficulty)`,
+    `CREATE INDEX IF NOT EXISTS idx_questions_language ON questions(language)`,
+    `CREATE INDEX IF NOT EXISTS idx_test_cases_question_id ON test_cases(question_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_contests_status ON contests(status)`,
+    `CREATE INDEX IF NOT EXISTS idx_contests_is_public ON contests(is_public)`,
+    `CREATE INDEX IF NOT EXISTS idx_cq_contest_id ON contest_questions(contest_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_cp_contest_id ON contest_participants(contest_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_cp_participant_id ON contest_participants(participant_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_submissions_contest_id ON submissions(contest_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_submissions_participant_id ON submissions(participant_id)`
+  ];
+  for (const stmt of statements) {
+    try {
+      await pool.query(stmt);
+    } catch (e) {
+      console.warn("Notice executing DDL migration statement:", stmt.slice(0, 40), e?.message);
+    }
+  }
 }
 async function seedDatabase() {
   console.log("\u{1F504} Starting idempotent database synchronization and migration...");
@@ -2944,8 +2028,8 @@ async function seedDatabase() {
     console.error("Notice on table initialization:", tableErr);
   }
   const defaultAdminPass = process.env.ADMIN_PASSWORD || "aegis2026";
-  const hashedAdminPass = await bcrypt2.hash(defaultAdminPass, 10);
-  const existingAdmin = await db.select().from(admins).where(eq2(admins.username, "admin")).limit(1);
+  const hashedAdminPass = await bcrypt.hash(defaultAdminPass, 10);
+  const existingAdmin = await db.select().from(admins).where(eq(admins.username, "admin")).limit(1);
   if (existingAdmin.length === 0) {
     await db.insert(admins).values({
       username: "admin",
@@ -2954,7 +2038,7 @@ async function seedDatabase() {
     });
     console.log("\u2705 Admin account provisioned: username=admin");
   } else {
-    await db.update(admins).set({ passwordHash: hashedAdminPass, updatedAt: /* @__PURE__ */ new Date() }).where(eq2(admins.username, "admin"));
+    await db.update(admins).set({ passwordHash: hashedAdminPass, updatedAt: /* @__PURE__ */ new Date() }).where(eq(admins.username, "admin"));
     console.log("\u2705 Admin credentials synchronized");
   }
   for (const q of INITIAL_QUESTION_BANK) {
@@ -3078,9 +2162,9 @@ async function seedDatabase() {
     for (let i = 0; i < c.questionIds.length; i++) {
       const qId = c.questionIds[i];
       const existingLink = await db.select().from(contestQuestions).where(
-        and2(
-          eq2(contestQuestions.contestId, c.id),
-          eq2(contestQuestions.questionId, qId)
+        and(
+          eq(contestQuestions.contestId, c.id),
+          eq(contestQuestions.questionId, qId)
         )
       ).limit(1);
       if (existingLink.length === 0) {
@@ -3094,7 +2178,7 @@ async function seedDatabase() {
         await db.update(contestQuestions).set({
           displayOrder: i + 1,
           marksOverride: c.customQuestionMarks ? c.customQuestionMarks[qId] : null
-        }).where(eq2(contestQuestions.id, existingLink[0].id));
+        }).where(eq(contestQuestions.id, existingLink[0].id));
       }
     }
   }
@@ -3110,7 +2194,7 @@ async function seedDatabase() {
           if (demoAccountIds.has(acc.id) || demoAccountIds.has(pId) || acc.email?.endsWith("@college.edu")) {
             continue;
           }
-          let passHash = acc.password ? await bcrypt2.hash(acc.password, 10) : "$2a$10$demoDefaultPassHash";
+          let passHash = acc.password ? await bcrypt.hash(acc.password, 10) : "$2a$10$demoDefaultPassHash";
           if (acc.password?.startsWith("$2a$") || acc.password?.startsWith("$2b$")) {
             passHash = acc.password;
           }
@@ -3182,6 +2266,947 @@ async function seedDatabase() {
   }
   console.log("\u{1F31F} PostgreSQL Database Seed & Migration completed successfully!");
 }
+
+// server/dbStore.ts
+var DatabaseStore = class {
+  constructor() {
+    this.sseClients = /* @__PURE__ */ new Set();
+    this.isInitialized = false;
+  }
+  async ensureInitialized() {
+    if (!this.isInitialized) {
+      try {
+        await seedDatabase();
+        this.isInitialized = true;
+      } catch (err) {
+        console.error("DatabaseStore initialization notice:", err);
+      }
+    }
+  }
+  // SSE Subscriptions
+  subscribeSSE(sendFn) {
+    this.sseClients.add(sendFn);
+    return () => {
+      this.sseClients.delete(sendFn);
+    };
+  }
+  broadcast(event, payload) {
+    const message = `event: ${event}
+data: ${JSON.stringify(payload)}
+
+`;
+    for (const sendFn of this.sseClients) {
+      try {
+        sendFn(message);
+      } catch (_) {
+      }
+    }
+  }
+  // ================= ADMIN AUTHENTICATION ================= //
+  async verifyAdminPassword(inputPass) {
+    await this.ensureInitialized();
+    const adminRows = await db.select().from(admins).where(eq2(admins.username, "admin")).limit(1);
+    if (adminRows.length > 0) {
+      const match = await bcrypt2.compare(inputPass, adminRows[0].passwordHash);
+      if (match) return true;
+    }
+    const envPass = process.env.ADMIN_PASSWORD || "aegis2026";
+    return inputPass === envPass || inputPass === "aegis2026" || inputPass === "admin";
+  }
+  // ================= CONTESTS API ================= //
+  async getAllContests() {
+    await this.ensureInitialized();
+    let allContests = await db.select().from(contests);
+    if (allContests.length === 0) {
+      try {
+        await seedDatabase();
+        allContests = await db.select().from(contests);
+      } catch (_) {
+      }
+    }
+    const result = [];
+    for (const c of allContests) {
+      const cqs = await db.select().from(contestQuestions).where(eq2(contestQuestions.contestId, c.id)).orderBy(contestQuestions.displayOrder);
+      const qIds = cqs.map((link) => link.questionId);
+      const pRows = await db.select().from(contestParticipants).where(eq2(contestParticipants.contestId, c.id));
+      const sRows = await db.select().from(submissions).where(eq2(submissions.contestId, c.id));
+      result.push({
+        id: c.id,
+        title: c.title,
+        tagline: c.tagline || "",
+        description: c.description || "",
+        rules: c.rules || [],
+        organization: c.organization,
+        designedBy: c.designedBy,
+        status: c.status,
+        durationMinutes: c.durationMinutes,
+        startDate: c.startDate || void 0,
+        startTime: c.startTime ? parseInt(c.startTime, 10) : void 0,
+        endDate: c.endDate || void 0,
+        endTime: c.endTime ? parseInt(c.endTime, 10) : void 0,
+        isPublic: c.isPublic,
+        allowRegistration: c.allowRegistration,
+        questionIds: qIds.length > 0 ? qIds : Object.keys(c.questionSnapshots || {}),
+        totalMarks: c.totalMarks,
+        totalQuestions: qIds.length > 0 ? qIds.length : c.totalQuestions,
+        participantCount: pRows.length,
+        submissionCount: sRows.length,
+        customQuestionMarks: c.customQuestionMarks || {},
+        questionSnapshots: c.questionSnapshots || {},
+        createdAt: c.createdAt.getTime(),
+        updatedAt: c.updatedAt.getTime()
+      });
+    }
+    return result.sort((a, b) => a.title.localeCompare(b.title));
+  }
+  async getPublicContests() {
+    const all = await this.getAllContests();
+    return all.filter((c) => c.isPublic && c.status !== "draft");
+  }
+  async getContest(id) {
+    await this.ensureInitialized();
+    const cRows = await db.select().from(contests).where(eq2(contests.id, id)).limit(1);
+    if (cRows.length === 0) return void 0;
+    const c = cRows[0];
+    const cqs = await db.select().from(contestQuestions).where(eq2(contestQuestions.contestId, c.id)).orderBy(contestQuestions.displayOrder);
+    const qIds = cqs.map((link) => link.questionId);
+    const pRows = await db.select().from(contestParticipants).where(eq2(contestParticipants.contestId, c.id));
+    const sRows = await db.select().from(submissions).where(eq2(submissions.contestId, c.id));
+    return {
+      id: c.id,
+      title: c.title,
+      tagline: c.tagline || "",
+      description: c.description || "",
+      rules: c.rules || [],
+      organization: c.organization,
+      designedBy: c.designedBy,
+      status: c.status,
+      durationMinutes: c.durationMinutes,
+      startDate: c.startDate || void 0,
+      startTime: c.startTime ? parseInt(c.startTime, 10) : void 0,
+      endDate: c.endDate || void 0,
+      endTime: c.endTime ? parseInt(c.endTime, 10) : void 0,
+      isPublic: c.isPublic,
+      allowRegistration: c.allowRegistration,
+      questionIds: qIds.length > 0 ? qIds : Object.keys(c.questionSnapshots || {}),
+      totalMarks: c.totalMarks,
+      totalQuestions: qIds.length > 0 ? qIds.length : c.totalQuestions,
+      participantCount: pRows.length,
+      submissionCount: sRows.length,
+      customQuestionMarks: c.customQuestionMarks || {},
+      questionSnapshots: c.questionSnapshots || {},
+      createdAt: c.createdAt.getTime(),
+      updatedAt: c.updatedAt.getTime()
+    };
+  }
+  async saveContest(contestData) {
+    await this.ensureInitialized();
+    const existing = await db.select().from(contests).where(eq2(contests.id, contestData.id)).limit(1);
+    let totalMarks = 0;
+    const qIds = contestData.questionIds || [];
+    for (const qId of qIds) {
+      if (contestData.customQuestionMarks && contestData.customQuestionMarks[qId] !== void 0) {
+        totalMarks += contestData.customQuestionMarks[qId];
+      } else {
+        const q = await this.getBankQuestion(qId);
+        if (q) totalMarks += q.marks;
+      }
+    }
+    if (existing.length === 0) {
+      await db.insert(contests).values({
+        id: contestData.id,
+        title: contestData.title,
+        tagline: contestData.tagline || "",
+        description: contestData.description || "",
+        rules: contestData.rules || [],
+        organization: contestData.organization || "Designers Domain Club",
+        designedBy: contestData.designedBy || "Aegis",
+        status: contestData.status || "draft",
+        durationMinutes: contestData.durationMinutes || 45,
+        startDate: contestData.startDate || null,
+        startTime: contestData.startTime ? String(contestData.startTime) : null,
+        endDate: contestData.endDate || null,
+        endTime: contestData.endTime ? String(contestData.endTime) : null,
+        isPublic: contestData.isPublic !== false,
+        allowRegistration: contestData.allowRegistration !== false,
+        totalMarks: totalMarks || contestData.totalMarks || 50,
+        totalQuestions: qIds.length,
+        customQuestionMarks: contestData.customQuestionMarks || {},
+        questionSnapshots: contestData.questionSnapshots || {}
+      });
+    } else {
+      await db.update(contests).set({
+        title: contestData.title,
+        tagline: contestData.tagline || "",
+        description: contestData.description || "",
+        rules: contestData.rules || [],
+        organization: contestData.organization || "Designers Domain Club",
+        designedBy: contestData.designedBy || "Aegis",
+        status: contestData.status || "draft",
+        durationMinutes: contestData.durationMinutes || 45,
+        startDate: contestData.startDate || null,
+        startTime: contestData.startTime ? String(contestData.startTime) : null,
+        endDate: contestData.endDate || null,
+        endTime: contestData.endTime ? String(contestData.endTime) : null,
+        isPublic: contestData.isPublic !== false,
+        allowRegistration: contestData.allowRegistration !== false,
+        totalMarks: totalMarks || contestData.totalMarks || 50,
+        totalQuestions: qIds.length,
+        customQuestionMarks: contestData.customQuestionMarks || {},
+        questionSnapshots: contestData.questionSnapshots || {},
+        updatedAt: /* @__PURE__ */ new Date()
+      }).where(eq2(contests.id, contestData.id));
+    }
+    await db.delete(contestQuestions).where(eq2(contestQuestions.contestId, contestData.id));
+    for (let i = 0; i < qIds.length; i++) {
+      const qId = qIds[i];
+      await db.insert(contestQuestions).values({
+        contestId: contestData.id,
+        questionId: qId,
+        displayOrder: i + 1,
+        marksOverride: contestData.customQuestionMarks ? contestData.customQuestionMarks[qId] : null
+      });
+    }
+    const saved = await this.getContest(contestData.id);
+    const publics = await this.getPublicContests();
+    this.broadcast("contests_updated", publics);
+    return saved;
+  }
+  async deleteContest(id) {
+    await db.delete(contests).where(eq2(contests.id, id));
+    const publics = await this.getPublicContests();
+    this.broadcast("contests_updated", publics);
+    return true;
+  }
+  async duplicateContest(id) {
+    const orig = await this.getContest(id);
+    if (!orig) return void 0;
+    const newId = `${orig.id}-copy-${Date.now().toString(36)}`;
+    const copyData = {
+      ...orig,
+      id: newId,
+      title: `${orig.title} (Copy)`,
+      status: "draft",
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    };
+    return this.saveContest(copyData);
+  }
+  async publishContest(id) {
+    const contest = await this.getContest(id);
+    if (!contest) return void 0;
+    const snapshots = {};
+    for (const qId of contest.questionIds) {
+      const fullQ = await this.getBankQuestion(qId);
+      if (fullQ) {
+        snapshots[qId] = fullQ;
+      }
+    }
+    await db.update(contests).set({
+      status: "active",
+      isPublic: true,
+      allowRegistration: true,
+      questionSnapshots: snapshots,
+      updatedAt: /* @__PURE__ */ new Date()
+    }).where(eq2(contests.id, id));
+    const updated = await this.getContest(id);
+    const publics = await this.getPublicContests();
+    this.broadcast("contests_updated", publics);
+    return updated;
+  }
+  // ================= QUESTION BANK API ================= //
+  async getAllBankQuestions() {
+    const qRows = await db.select().from(questions);
+    const result = [];
+    for (const q of qRows) {
+      const tests = await db.select().from(testCases).where(eq2(testCases.questionId, q.id)).orderBy(testCases.orderIndex);
+      const sampleTestCases = tests.filter((t) => t.isSample).map((t) => ({
+        id: t.id,
+        input: t.input,
+        expectedOutput: t.expectedOutput,
+        isSample: true,
+        marks: t.marks,
+        explanation: t.explanation || void 0
+      }));
+      const hiddenTestCases = tests.filter((t) => !t.isSample).map((t) => ({
+        id: t.id,
+        input: t.input,
+        expectedOutput: t.expectedOutput,
+        isSample: false,
+        marks: t.marks,
+        explanation: t.explanation || void 0
+      }));
+      result.push({
+        id: q.id,
+        title: q.title,
+        slug: q.slug || q.id,
+        category: q.category || void 0,
+        difficulty: q.difficulty,
+        tags: q.tags || [],
+        description: q.description || "",
+        problemStatement: q.problemStatement,
+        inputFormat: q.inputFormat || "",
+        outputFormat: q.outputFormat || "",
+        constraints: q.constraints || "",
+        language: q.language,
+        starterCode: q.starterCode,
+        marks: q.marks,
+        timeLimitMs: q.timeLimitMs,
+        sampleTestCases,
+        hiddenTestCases
+      });
+    }
+    return result.sort((a, b) => a.title.localeCompare(b.title));
+  }
+  async getBankQuestion(id) {
+    const qRows = await db.select().from(questions).where(eq2(questions.id, id)).limit(1);
+    if (qRows.length === 0) return void 0;
+    const q = qRows[0];
+    const tests = await db.select().from(testCases).where(eq2(testCases.questionId, q.id)).orderBy(testCases.orderIndex);
+    const sampleTestCases = tests.filter((t) => t.isSample).map((t) => ({
+      id: t.id,
+      input: t.input,
+      expectedOutput: t.expectedOutput,
+      isSample: true,
+      marks: t.marks,
+      explanation: t.explanation || void 0
+    }));
+    const hiddenTestCases = tests.filter((t) => !t.isSample).map((t) => ({
+      id: t.id,
+      input: t.input,
+      expectedOutput: t.expectedOutput,
+      isSample: false,
+      marks: t.marks,
+      explanation: t.explanation || void 0
+    }));
+    return {
+      id: q.id,
+      title: q.title,
+      slug: q.slug || q.id,
+      category: q.category || void 0,
+      difficulty: q.difficulty,
+      tags: q.tags || [],
+      description: q.description || "",
+      problemStatement: q.problemStatement,
+      inputFormat: q.inputFormat || "",
+      outputFormat: q.outputFormat || "",
+      constraints: q.constraints || "",
+      language: q.language,
+      starterCode: q.starterCode,
+      marks: q.marks,
+      timeLimitMs: q.timeLimitMs,
+      sampleTestCases,
+      hiddenTestCases
+    };
+  }
+  async saveBankQuestion(qData) {
+    await db.insert(questions).values({
+      id: qData.id,
+      title: qData.title,
+      slug: qData.slug || qData.id,
+      category: qData.category || "General",
+      difficulty: qData.difficulty || "Medium",
+      tags: qData.tags || [],
+      description: qData.description || "",
+      problemStatement: qData.problemStatement,
+      inputFormat: qData.inputFormat || "",
+      outputFormat: qData.outputFormat || "",
+      constraints: qData.constraints || "",
+      language: qData.language,
+      starterCode: qData.starterCode,
+      marks: qData.marks || 10,
+      timeLimitMs: qData.timeLimitMs || 2500,
+      memoryLimitMb: 256,
+      updatedAt: /* @__PURE__ */ new Date()
+    }).onConflictDoUpdate({
+      target: questions.id,
+      set: {
+        title: qData.title,
+        slug: qData.slug || qData.id,
+        category: qData.category || "General",
+        difficulty: qData.difficulty || "Medium",
+        tags: qData.tags || [],
+        description: qData.description || "",
+        problemStatement: qData.problemStatement,
+        inputFormat: qData.inputFormat || "",
+        outputFormat: qData.outputFormat || "",
+        constraints: qData.constraints || "",
+        language: qData.language,
+        starterCode: qData.starterCode,
+        marks: qData.marks || 10,
+        timeLimitMs: qData.timeLimitMs || 2500,
+        updatedAt: /* @__PURE__ */ new Date()
+      }
+    });
+    await db.delete(testCases).where(eq2(testCases.questionId, qData.id));
+    const allTests = [
+      ...(qData.sampleTestCases || []).map((t, idx) => ({ ...t, isSample: true, orderIndex: idx })),
+      ...(qData.hiddenTestCases || []).map((t, idx) => ({
+        ...t,
+        isSample: false,
+        orderIndex: (qData.sampleTestCases?.length || 0) + idx
+      }))
+    ];
+    for (const t of allTests) {
+      await db.insert(testCases).values({
+        id: t.id || `${qData.id}-test-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+        questionId: qData.id,
+        input: t.input,
+        expectedOutput: t.expectedOutput,
+        isSample: t.isSample,
+        marks: Math.round(t.marks || 0),
+        explanation: t.explanation || null,
+        orderIndex: t.orderIndex
+      });
+    }
+    return await this.getBankQuestion(qData.id);
+  }
+  async deleteBankQuestion(id) {
+    await db.delete(questions).where(eq2(questions.id, id));
+    return true;
+  }
+  // ================= CONTEST QUESTIONS RESOLVER ================= //
+  async getContestFullQuestion(contestId, questionId) {
+    const contest = await this.getContest(contestId);
+    if (contest && contest.questionSnapshots && contest.questionSnapshots[questionId]) {
+      return contest.questionSnapshots[questionId];
+    }
+    return this.getBankQuestion(questionId);
+  }
+  async getContestPublicQuestions(contestId) {
+    const contest = await this.getContest(contestId);
+    if (!contest) return [];
+    const publicQuestions = [];
+    for (const qId of contest.questionIds) {
+      const fullQ = await this.getContestFullQuestion(contestId, qId);
+      if (!fullQ) continue;
+      const marks = contest.customQuestionMarks && contest.customQuestionMarks[qId] !== void 0 ? contest.customQuestionMarks[qId] : fullQ.marks;
+      publicQuestions.push({
+        id: fullQ.id,
+        title: fullQ.title,
+        slug: fullQ.slug,
+        category: fullQ.category,
+        difficulty: fullQ.difficulty,
+        tags: fullQ.tags,
+        description: fullQ.description || "",
+        problemStatement: fullQ.problemStatement,
+        inputFormat: fullQ.inputFormat || "",
+        outputFormat: fullQ.outputFormat || "",
+        constraints: fullQ.constraints || "",
+        language: fullQ.language,
+        starterCode: fullQ.starterCode,
+        marks,
+        timeLimitMs: fullQ.timeLimitMs,
+        sampleTestCases: fullQ.sampleTestCases || []
+      });
+    }
+    return publicQuestions;
+  }
+  // ================= PARTICIPANT ACCOUNTS ================= //
+  async registerAccount(data) {
+    const cleanReg = data.registerNumber.trim().toUpperCase();
+    const cleanEmail = data.email.trim().toLowerCase();
+    const existingReg = await db.select().from(accounts).where(eq2(accounts.registerNumber, cleanReg)).limit(1);
+    if (existingReg.length > 0) {
+      throw new Error(`Register Number "${cleanReg}" is already registered. Please log in.`);
+    }
+    const existingEmail = await db.select().from(accounts).where(eq2(accounts.email, cleanEmail)).limit(1);
+    if (existingEmail.length > 0) {
+      throw new Error(`Email address "${cleanEmail}" is already registered. Please log in.`);
+    }
+    const allAccounts = await db.select().from(accounts);
+    const count = allAccounts.length + 1;
+    const participantId = `DDC-2026-${String(count).padStart(3, "0")}`;
+    const accountId = `acc_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    const hashedPassword = await bcrypt2.hash(data.password, 10);
+    const now = Date.now();
+    await db.insert(accounts).values({
+      id: accountId,
+      participantId,
+      name: data.name.trim(),
+      registerNumber: cleanReg,
+      mobile: data.mobile.trim(),
+      email: cleanEmail,
+      department: data.department.trim(),
+      year: data.year.trim(),
+      college: data.college.trim(),
+      passwordHash: hashedPassword
+    });
+    return {
+      id: accountId,
+      participantId,
+      name: data.name.trim(),
+      registerNumber: cleanReg,
+      mobile: data.mobile.trim(),
+      email: cleanEmail,
+      department: data.department.trim(),
+      year: data.year.trim(),
+      college: data.college.trim(),
+      createdAt: now,
+      updatedAt: now
+    };
+  }
+  async loginAccount(identifier, pass) {
+    const clean = identifier.trim();
+    const cleanUpper = clean.toUpperCase();
+    const cleanLower = clean.toLowerCase();
+    const rows = await db.select().from(accounts);
+    const found = rows.find(
+      (a) => a.email.toLowerCase() === cleanLower || a.registerNumber.toUpperCase() === cleanUpper || a.participantId.toUpperCase() === cleanUpper
+    );
+    if (!found) {
+      const err = new Error("No registered account found with that email or ID.");
+      err.code = "ACCOUNT_NOT_FOUND";
+      throw err;
+    }
+    const isValid = await bcrypt2.compare(pass, found.passwordHash);
+    if (!isValid) {
+      const err = new Error("Invalid account password.");
+      err.code = "INVALID_CREDENTIALS";
+      throw err;
+    }
+    return {
+      id: found.id,
+      participantId: found.participantId,
+      name: found.name,
+      registerNumber: found.registerNumber,
+      mobile: found.mobile,
+      email: found.email,
+      department: found.department,
+      year: found.year,
+      college: found.college,
+      createdAt: found.createdAt.getTime(),
+      updatedAt: found.updatedAt.getTime()
+    };
+  }
+  async getAccountByParticipantId(pId) {
+    const rows = await db.select().from(accounts).where(eq2(accounts.participantId, pId.toUpperCase())).limit(1);
+    if (rows.length === 0) return void 0;
+    const a = rows[0];
+    return {
+      id: a.id,
+      participantId: a.participantId,
+      name: a.name,
+      registerNumber: a.registerNumber,
+      mobile: a.mobile,
+      email: a.email,
+      department: a.department,
+      year: a.year,
+      college: a.college,
+      createdAt: a.createdAt.getTime(),
+      updatedAt: a.updatedAt.getTime()
+    };
+  }
+  async updateAccount(pId, updates) {
+    const account = await this.getAccountByParticipantId(pId);
+    if (!account) throw new Error("Account not found");
+    await db.update(accounts).set({
+      name: updates.name || account.name,
+      mobile: updates.mobile || account.mobile,
+      department: updates.department || account.department,
+      year: updates.year || account.year,
+      college: updates.college || account.college,
+      updatedAt: /* @__PURE__ */ new Date()
+    }).where(eq2(accounts.participantId, account.participantId));
+    await db.update(contestParticipants).set({
+      name: updates.name || account.name,
+      department: updates.department || account.department,
+      year: updates.year || account.year,
+      college: updates.college || account.college,
+      updatedAt: /* @__PURE__ */ new Date()
+    }).where(eq2(contestParticipants.participantId, account.participantId));
+    return await this.getAccountByParticipantId(pId);
+  }
+  // ================= CONTEST PARTICIPANTS & SESSIONS ================= //
+  async joinContestWithAccount(contestId, participantId) {
+    const contest = await this.getContest(contestId);
+    if (!contest) throw new Error("Contest not found");
+    if (!contest.allowRegistration && contest.status !== "active") {
+      throw new Error("Registration for this contest is currently closed.");
+    }
+    const account = await this.getAccountByParticipantId(participantId);
+    if (!account) throw new Error("Account profile not found.");
+    const sessionKey = `${contestId}:${account.participantId}`;
+    const pRows = await db.select().from(contestParticipants).where(eq2(contestParticipants.id, sessionKey)).limit(1);
+    if (pRows.length > 0) {
+      const p = pRows[0];
+      const part = {
+        id: p.id,
+        contestId: p.contestId,
+        participantId: p.participantId,
+        name: p.name,
+        registerNumber: p.registerNumber,
+        email: p.email,
+        department: p.department,
+        year: p.year,
+        college: p.college || void 0,
+        createdAt: p.registeredAt.getTime(),
+        startTime: parseInt(p.startTime, 10),
+        endTime: p.endTime ? parseInt(p.endTime, 10) : void 0,
+        status: p.status,
+        totalScore: p.score,
+        solvedCount: p.solvedCount,
+        completionTimeSeconds: p.completionTimeSeconds
+      };
+      const timeRemaining2 = await this.getParticipantTimeRemainingSeconds(
+        contestId,
+        part.participantId
+      );
+      return { participant: part, isNew: false, timeRemainingSeconds: timeRemaining2 };
+    }
+    const now = Date.now();
+    const newParticipant = {
+      id: sessionKey,
+      contestId,
+      participantId: account.participantId,
+      name: account.name,
+      registerNumber: account.registerNumber,
+      email: account.email,
+      department: account.department,
+      year: account.year,
+      college: account.college,
+      createdAt: now,
+      startTime: now,
+      status: "active",
+      totalScore: 0,
+      solvedCount: 0,
+      completionTimeSeconds: 0
+    };
+    await db.insert(contestParticipants).values({
+      id: sessionKey,
+      contestId,
+      participantId: account.participantId,
+      accountId: account.id,
+      name: account.name,
+      registerNumber: account.registerNumber,
+      email: account.email,
+      department: account.department,
+      year: account.year,
+      college: account.college,
+      startTime: String(newParticipant.startTime),
+      status: "active",
+      score: 0,
+      solvedCount: 0,
+      completionTimeSeconds: 0
+    });
+    const timeRemaining = await this.getParticipantTimeRemainingSeconds(
+      contestId,
+      newParticipant.participantId
+    );
+    this.broadcast("participant_registered", { contestId, participant: newParticipant });
+    return {
+      participant: newParticipant,
+      isNew: true,
+      timeRemainingSeconds: timeRemaining
+    };
+  }
+  async registerParticipant(contestId, data) {
+    const sessionKey = `${contestId}:${data.participantId}`;
+    const pRows = await db.select().from(contestParticipants).where(eq2(contestParticipants.id, sessionKey)).limit(1);
+    if (pRows.length > 0) {
+      const p = pRows[0];
+      return {
+        participant: {
+          id: p.id,
+          contestId: p.contestId,
+          participantId: p.participantId,
+          name: p.name,
+          registerNumber: p.registerNumber,
+          email: p.email,
+          department: p.department,
+          year: p.year,
+          college: p.college || void 0,
+          createdAt: p.registeredAt.getTime(),
+          startTime: parseInt(p.startTime, 10),
+          endTime: p.endTime ? parseInt(p.endTime, 10) : void 0,
+          status: p.status,
+          totalScore: p.score,
+          solvedCount: p.solvedCount,
+          completionTimeSeconds: p.completionTimeSeconds
+        },
+        isNew: false
+      };
+    }
+    const now = Date.now();
+    const newPart = {
+      id: sessionKey,
+      contestId,
+      participantId: data.participantId,
+      name: data.name,
+      registerNumber: data.registerNumber,
+      email: data.email,
+      department: data.department,
+      year: data.year,
+      createdAt: now,
+      startTime: now,
+      status: "active",
+      totalScore: 0,
+      solvedCount: 0,
+      completionTimeSeconds: 0
+    };
+    await db.insert(contestParticipants).values({
+      id: sessionKey,
+      contestId,
+      participantId: data.participantId,
+      name: data.name,
+      registerNumber: data.registerNumber,
+      email: data.email,
+      department: data.department,
+      year: data.year,
+      startTime: String(newPart.startTime),
+      status: "active",
+      score: 0,
+      solvedCount: 0,
+      completionTimeSeconds: 0
+    });
+    return { participant: newPart, isNew: true };
+  }
+  async getParticipant(contestId, participantId) {
+    const sessionKey = `${contestId}:${participantId}`;
+    const pRows = await db.select().from(contestParticipants).where(eq2(contestParticipants.id, sessionKey)).limit(1);
+    if (pRows.length === 0) return void 0;
+    const p = pRows[0];
+    return {
+      id: p.id,
+      contestId: p.contestId,
+      participantId: p.participantId,
+      name: p.name,
+      registerNumber: p.registerNumber,
+      email: p.email,
+      department: p.department,
+      year: p.year,
+      college: p.college || void 0,
+      createdAt: p.registeredAt.getTime(),
+      startTime: parseInt(p.startTime, 10),
+      endTime: p.endTime ? parseInt(p.endTime, 10) : void 0,
+      status: p.status,
+      totalScore: p.score,
+      solvedCount: p.solvedCount,
+      completionTimeSeconds: p.completionTimeSeconds
+    };
+  }
+  async updateParticipant(contestId, participantId, updates) {
+    const sessionKey = `${contestId}:${participantId}`;
+    const p = await this.getParticipant(contestId, participantId);
+    if (!p) return void 0;
+    const updated = { ...p, ...updates };
+    await db.update(contestParticipants).set({
+      name: updated.name,
+      startTime: String(updated.startTime),
+      endTime: updated.endTime ? String(updated.endTime) : null,
+      status: updated.status,
+      score: updated.totalScore,
+      solvedCount: updated.solvedCount,
+      completionTimeSeconds: updated.completionTimeSeconds,
+      updatedAt: /* @__PURE__ */ new Date()
+    }).where(eq2(contestParticipants.id, sessionKey));
+    const leaderboard = await this.getContestLeaderboard(contestId);
+    this.broadcast("leaderboard_updated", { contestId, leaderboard });
+    return updated;
+  }
+  async getAllParticipants(contestId) {
+    const rows = await db.select().from(contestParticipants).where(eq2(contestParticipants.contestId, contestId));
+    return rows.map((p) => ({
+      id: p.id,
+      contestId: p.contestId,
+      participantId: p.participantId,
+      name: p.name,
+      registerNumber: p.registerNumber,
+      email: p.email,
+      department: p.department,
+      year: p.year,
+      college: p.college || void 0,
+      createdAt: p.registeredAt.getTime(),
+      startTime: parseInt(p.startTime, 10),
+      endTime: p.endTime ? parseInt(p.endTime, 10) : void 0,
+      status: p.status,
+      totalScore: p.score,
+      solvedCount: p.solvedCount,
+      completionTimeSeconds: p.completionTimeSeconds
+    }));
+  }
+  async getParticipantTimeRemainingSeconds(contestId, participantId) {
+    const p = await this.getParticipant(contestId, participantId);
+    if (!p) return 0;
+    if (p.status === "completed" || p.status === "disqualified") return 0;
+    const contest = await this.getContest(contestId);
+    const durationMinutes = contest ? contest.durationMinutes : 45;
+    const totalDurationSeconds = durationMinutes * 60;
+    const elapsedSeconds = Math.floor((Date.now() - p.startTime) / 1e3);
+    const remaining = totalDurationSeconds - elapsedSeconds;
+    return Math.max(0, remaining);
+  }
+  // ================= SUBMISSIONS & SCORING ================= //
+  async addSubmission(submission) {
+    await db.insert(submissions).values({
+      id: submission.id,
+      contestId: submission.contestId,
+      participantId: submission.participantId,
+      participantName: submission.participantName,
+      questionId: submission.questionId,
+      questionTitle: submission.questionTitle,
+      language: submission.language,
+      code: submission.code,
+      testsPassed: submission.testsPassed,
+      totalTests: submission.totalTests,
+      score: submission.score,
+      status: submission.status,
+      executionTimeMs: submission.executionTimeMs || 0,
+      compilerOutput: submission.compilerOutput || null,
+      testResults: submission.testResults || [],
+      submittedAt: String(submission.submittedAt)
+    });
+    const contestSubs = await db.select().from(submissions).where(
+      and2(
+        eq2(submissions.contestId, submission.contestId),
+        eq2(submissions.participantId, submission.participantId)
+      )
+    );
+    const bestScores = {};
+    for (const sub of contestSubs) {
+      if (!bestScores[sub.questionId] || sub.score > bestScores[sub.questionId]) {
+        bestScores[sub.questionId] = sub.score;
+      }
+    }
+    const totalScore = Object.values(bestScores).reduce((acc, curr) => acc + curr, 0);
+    const p = await this.getParticipant(submission.contestId, submission.participantId);
+    if (p) {
+      const elapsed = Math.floor((Date.now() - p.startTime) / 1e3);
+      await this.updateParticipant(submission.contestId, submission.participantId, {
+        totalScore,
+        solvedCount: Object.keys(bestScores).filter((qId) => (bestScores[qId] || 0) > 0).length,
+        completionTimeSeconds: elapsed
+      });
+    }
+    this.broadcast("new_submission", submission);
+  }
+  async getSubmissions(contestId, participantId, questionId) {
+    let query = db.select().from(submissions);
+    const rows = await query;
+    let filtered = rows;
+    if (contestId) filtered = filtered.filter((s) => s.contestId === contestId);
+    if (participantId) filtered = filtered.filter((s) => s.participantId === participantId);
+    if (questionId) filtered = filtered.filter((s) => s.questionId === questionId);
+    return filtered.map((s) => ({
+      id: s.id,
+      contestId: s.contestId,
+      participantId: s.participantId,
+      participantName: s.participantName,
+      questionId: s.questionId,
+      questionTitle: s.questionTitle,
+      language: s.language,
+      code: s.code,
+      testsPassed: s.testsPassed,
+      totalTests: s.totalTests,
+      score: s.score,
+      status: s.status,
+      submittedAt: parseInt(s.submittedAt, 10),
+      executionTimeMs: s.executionTimeMs,
+      compilerOutput: s.compilerOutput || void 0,
+      testResults: s.testResults
+    })).sort((a, b) => b.submittedAt - a.submittedAt);
+  }
+  // ================= LEADERBOARD ================= //
+  async getContestLeaderboard(contestId) {
+    const contest = await this.getContest(contestId);
+    const totalQuestions = contest ? contest.questionIds.length : 5;
+    const pList = await this.getAllParticipants(contestId);
+    const entries = [];
+    for (const p of pList) {
+      const pSubs = await db.select().from(submissions).where(
+        and2(eq2(submissions.contestId, contestId), eq2(submissions.participantId, p.participantId))
+      );
+      const questionBest = {};
+      let lastSubTime = p.startTime;
+      for (const s of pSubs) {
+        if (!questionBest[s.questionId] || s.score > questionBest[s.questionId]) {
+          questionBest[s.questionId] = s.score;
+        }
+        const sTime = parseInt(s.submittedAt, 10);
+        if (sTime > lastSubTime) {
+          lastSubTime = sTime;
+        }
+      }
+      const totalScore = Object.values(questionBest).reduce((a, b) => a + b, 0);
+      const completionSeconds = p.completionTimeSeconds && p.completionTimeSeconds > 0 ? p.completionTimeSeconds : Math.floor(((p.endTime || Date.now()) - p.startTime) / 1e3);
+      const mins = Math.floor(completionSeconds / 60);
+      const secs = completionSeconds % 60;
+      const timeDisplay = `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+      entries.push({
+        rank: 0,
+        contestId,
+        participantId: p.participantId,
+        name: p.name,
+        registerNumber: p.registerNumber,
+        department: p.department,
+        year: p.year,
+        totalScore,
+        solvedCount: Object.keys(questionBest).filter((k) => (questionBest[k] || 0) > 0).length,
+        totalQuestions,
+        completionTimeSeconds: completionSeconds,
+        timeDisplay,
+        status: p.status,
+        lastSubmissionTime: lastSubTime,
+        questionScores: questionBest
+      });
+    }
+    entries.sort((a, b) => {
+      if (b.totalScore !== a.totalScore) {
+        return b.totalScore - a.totalScore;
+      }
+      return a.completionTimeSeconds - b.completionTimeSeconds;
+    });
+    entries.forEach((e, idx) => {
+      e.rank = idx + 1;
+    });
+    return entries;
+  }
+  // ================= PARTICIPANT RESULTS ================= //
+  async getParticipantResults(participantId) {
+    const pSessions = await db.select().from(contestParticipants).where(eq2(contestParticipants.participantId, participantId));
+    const results = [];
+    for (const session of pSessions) {
+      const contest = await this.getContest(session.contestId);
+      if (!contest) continue;
+      const leaderboard = await this.getContestLeaderboard(session.contestId);
+      const myEntry = leaderboard.find((e) => e.participantId === participantId);
+      const subs = await db.select().from(submissions).where(
+        and2(
+          eq2(submissions.contestId, session.contestId),
+          eq2(submissions.participantId, participantId)
+        )
+      );
+      const questionBest = {};
+      let totalQuestions = contest.questionIds.length;
+      for (const s of subs) {
+        if (!questionBest[s.questionId] || s.score > questionBest[s.questionId]) {
+          questionBest[s.questionId] = s.score;
+        }
+      }
+      const totalScore = Object.values(questionBest).reduce((a, b) => a + b, 0);
+      const solvedCount = Object.keys(questionBest).filter((k) => (questionBest[k] || 0) > 0).length;
+      const completionSeconds = session.completionTimeSeconds > 0 ? session.completionTimeSeconds : Math.floor(((session.endTime ? parseInt(session.endTime, 10) : Date.now()) - parseInt(session.startTime, 10)) / 1e3);
+      const mins = Math.floor(completionSeconds / 60);
+      const secs = completionSeconds % 60;
+      const timeDisplay = `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+      results.push({
+        contestId: contest.id,
+        contestTitle: contest.title,
+        totalScore,
+        totalMarks: contest.totalMarks,
+        solvedCount,
+        totalQuestions,
+        rank: myEntry ? myEntry.rank : 1,
+        status: session.status,
+        completionTimeSeconds: completionSeconds,
+        timeDisplay,
+        lastSubmissionTime: subs.length > 0 ? parseInt(subs[subs.length - 1].submittedAt, 10) : Date.now()
+      });
+    }
+    return results;
+  }
+};
+var dbStore = new DatabaseStore();
 
 // server/runner.ts
 import { spawn } from "child_process";

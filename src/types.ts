@@ -56,7 +56,9 @@ export interface Contest {
   designedBy: string;
   status: ContestStatus;
   durationMinutes: number;
+  startDate?: string;
   startTime?: number;
+  endDate?: string;
   endTime?: number;
   isPublic: boolean;
   accessCode?: string;
