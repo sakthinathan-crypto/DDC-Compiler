@@ -178,25 +178,46 @@ export async function createApp() {
     }
   });
 
-  app.get('/api/account/:participantId', async (req: Request, res: Response) => {
+  // Profile endpoints (support /api/me/profile and /api/account/:participantId)
+  app.get(['/api/me/profile', '/api/account/:participantId'], async (req: Request, res: Response) => {
     try {
-      const account = await dbStore.getAccountByParticipantId(req.params.participantId);
+      const pId = (req.query.participantId as string) || (req.headers['x-participant-id'] as string) || req.params.participantId;
+      if (!pId) {
+        return res.status(400).json({ error: 'Participant ID is required' });
+      }
+      const account = await dbStore.getAccountByParticipantId(pId);
       if (!account) {
         return res.status(404).json({ error: 'Account not found' });
       }
-      const results = await dbStore.getParticipantResults(account.participantId);
-      res.json({ account, results });
+      res.json(account);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  app.put('/api/account/:participantId', async (req: Request, res: Response) => {
+  app.put(['/api/me/profile', '/api/account/:participantId'], async (req: Request, res: Response) => {
     try {
-      const updated = await dbStore.updateAccount(req.params.participantId, req.body);
+      const pId = req.body.participantId || (req.headers['x-participant-id'] as string) || req.params.participantId;
+      if (!pId) {
+        return res.status(400).json({ error: 'Participant ID is required' });
+      }
+      const updated = await dbStore.updateAccount(pId, req.body);
       res.json({ success: true, account: updated });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
+    }
+  });
+
+  app.get('/api/me/results', async (req: Request, res: Response) => {
+    try {
+      const pId = (req.query.participantId as string) || (req.headers['x-participant-id'] as string);
+      if (!pId) {
+        return res.status(400).json({ error: 'Participant ID is required' });
+      }
+      const results = await dbStore.getParticipantResults(pId);
+      res.json(results);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
   });
 
@@ -220,15 +241,16 @@ export async function createApp() {
     }
   });
 
-  // Legacy register participant
-  app.post('/api/register', async (req: Request, res: Response) => {
+  // Participant Registration (contest-specific & generic)
+  app.post(['/api/contests/:contestId/participants/register', '/api/register'], async (req: Request, res: Response) => {
     try {
       const { contestId, name, registerNumber, department, year, email, participantId } = req.body;
+      const cId = req.params.contestId || contestId || 'breach-the-bug-round-2';
+
       if (!name || !registerNumber || !department || !year || !email || !participantId) {
         return res.status(400).json({ error: 'All fields are required.' });
       }
 
-      const cId = contestId || 'breach-the-bug-round-2';
       const result = await dbStore.registerParticipant(cId, {
         name,
         registerNumber,
@@ -244,16 +266,17 @@ export async function createApp() {
     }
   });
 
-  app.get('/api/participant/:participantId', async (req: Request, res: Response) => {
+  app.get(['/api/contests/:contestId/participants/:id', '/api/participant/:participantId'], async (req: Request, res: Response) => {
     try {
-      const contestId = (req.query.contestId as string) || 'breach-the-bug-round-2';
-      const participant = await dbStore.getParticipant(contestId, req.params.participantId);
+      const contestId = req.params.contestId || (req.query.contestId as string) || 'breach-the-bug-round-2';
+      const participantId = req.params.id || req.params.participantId;
+      const participant = await dbStore.getParticipant(contestId, participantId);
       if (!participant) {
         return res.status(404).json({ error: 'Participant not found' });
       }
       const timeRemaining = await dbStore.getParticipantTimeRemainingSeconds(
         contestId,
-        req.params.participantId
+        participantId
       );
       res.json({ participant, timeRemainingSeconds: timeRemaining });
     } catch (err: any) {
@@ -262,14 +285,16 @@ export async function createApp() {
   });
 
   // Finish or Disqualify Contest Session
-  app.post('/api/participant/finish', async (req: Request, res: Response) => {
+  app.post(['/api/contests/:contestId/finish', '/api/participant/finish'], async (req: Request, res: Response) => {
     try {
       const { contestId, participantId, reason } = req.body;
-      if (!participantId) {
+      const cId = req.params.contestId || contestId || 'breach-the-bug-round-2';
+      const pId = participantId;
+
+      if (!pId) {
         return res.status(400).json({ error: 'participantId is required' });
       }
-      const cId = contestId || 'breach-the-bug-round-2';
-      const current = await dbStore.getParticipant(cId, participantId);
+      const current = await dbStore.getParticipant(cId, pId);
       if (!current) {
         return res.status(404).json({ error: 'Participant not found' });
       }
@@ -278,7 +303,7 @@ export async function createApp() {
       const elapsed = Math.floor((now - current.startTime) / 1000);
       const isDisqualified = reason === 'tab_switch_exceeded' || reason === 'disqualified';
 
-      const updated = await dbStore.updateParticipant(cId, participantId, {
+      const updated = await dbStore.updateParticipant(cId, pId, {
         status: isDisqualified ? 'disqualified' : 'completed',
         endTime: now,
         completionTimeSeconds: elapsed,
@@ -344,14 +369,16 @@ export async function createApp() {
     }
   });
 
-  app.post('/api/submit', async (req: Request, res: Response) => {
+  // Code submission (support /api/contests/:contestId/submit and /api/submit)
+  app.post(['/api/contests/:contestId/submit', '/api/submit'], async (req: Request, res: Response) => {
     try {
       const { contestId, questionId, participantId, participantName, code, language } = req.body;
+      const cId = req.params.contestId || contestId || 'breach-the-bug-round-2';
+
       if (!questionId || !participantId || !code || !language) {
         return res.status(400).json({ error: 'Missing required submission fields.' });
       }
 
-      const cId = contestId || 'breach-the-bug-round-2';
       const p = await dbStore.getParticipant(cId, participantId);
       if (!p) {
         return res.status(403).json({ error: 'Participant session not found or expired.' });
@@ -494,6 +521,8 @@ export async function createApp() {
       res.json({
         success: true,
         submission,
+        participant: p,
+        timeRemainingSeconds: timeRem,
       });
     } catch (err: any) {
       res.status(500).json({ error: err.message || 'Submission failed' });
@@ -501,9 +530,9 @@ export async function createApp() {
   });
 
   // ================= LEADERBOARD & SUBMISSIONS ================= //
-  app.get('/api/leaderboard', async (req: Request, res: Response) => {
+  app.get(['/api/contests/:contestId/leaderboard', '/api/leaderboard'], async (req: Request, res: Response) => {
     try {
-      const contestId = (req.query.contestId as string) || 'breach-the-bug-round-2';
+      const contestId = req.params.contestId || (req.query.contestId as string) || 'breach-the-bug-round-2';
       const leaderboard = await dbStore.getContestLeaderboard(contestId);
       res.json(leaderboard);
     } catch (err: any) {
@@ -525,14 +554,14 @@ export async function createApp() {
   });
 
   // ================= ADMIN OPERATIONS ================= //
-  app.post('/api/admin/login', async (req: Request, res: Response) => {
+  app.post(['/api/admin/auth', '/api/admin/login'], async (req: Request, res: Response) => {
     const { passcode, password } = req.body;
     const input = passcode || password || '';
     const isValid = await dbStore.verifyAdminPassword(input);
     if (isValid) {
       return res.json({ success: true, token: 'ddc_admin_auth_token_verified' });
     }
-    return res.status(401).json({ error: 'Invalid admin passcode' });
+    return res.status(401).json({ error: 'Invalid admin passcode (try "aegis2026")' });
   });
 
   // Admin Contests Management
@@ -548,7 +577,7 @@ export async function createApp() {
   app.post('/api/admin/contests', async (req: Request, res: Response) => {
     try {
       const saved = await dbStore.saveContest(req.body);
-      res.json(saved);
+      res.json({ success: true, contest: saved });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }
@@ -557,7 +586,7 @@ export async function createApp() {
   app.put('/api/admin/contests/:id', async (req: Request, res: Response) => {
     try {
       const saved = await dbStore.saveContest({ ...req.body, id: req.params.id });
-      res.json(saved);
+      res.json({ success: true, contest: saved });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }
@@ -575,7 +604,7 @@ export async function createApp() {
   app.post('/api/admin/contests/:id/publish', async (req: Request, res: Response) => {
     try {
       const published = await dbStore.publishContest(req.params.id);
-      res.json(published);
+      res.json({ success: true, contest: published });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -584,14 +613,14 @@ export async function createApp() {
   app.post('/api/admin/contests/:id/duplicate', async (req: Request, res: Response) => {
     try {
       const dup = await dbStore.duplicateContest(req.params.id);
-      res.json(dup);
+      res.json({ success: true, contest: dup });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  // Admin Question Bank Management
-  app.get('/api/admin/questions', async (req: Request, res: Response) => {
+  // Admin Question Bank Management (supports /api/admin/question-bank and /api/admin/questions)
+  app.get(['/api/admin/question-bank', '/api/admin/questions'], async (req: Request, res: Response) => {
     try {
       const questions = await dbStore.getAllBankQuestions();
       res.json(questions);
@@ -600,28 +629,73 @@ export async function createApp() {
     }
   });
 
-  app.post('/api/admin/questions', async (req: Request, res: Response) => {
+  app.post(['/api/admin/question-bank', '/api/admin/questions'], async (req: Request, res: Response) => {
     try {
       const saved = await dbStore.saveBankQuestion(req.body);
-      res.json(saved);
+      res.json({ success: true, question: saved });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }
   });
 
-  app.put('/api/admin/questions/:id', async (req: Request, res: Response) => {
+  app.put(['/api/admin/question-bank/:id', '/api/admin/questions/:id'], async (req: Request, res: Response) => {
     try {
       const saved = await dbStore.saveBankQuestion({ ...req.body, id: req.params.id });
-      res.json(saved);
+      res.json({ success: true, question: saved });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }
   });
 
-  app.delete('/api/admin/questions/:id', async (req: Request, res: Response) => {
+  app.delete(['/api/admin/question-bank/:id', '/api/admin/questions/:id'], async (req: Request, res: Response) => {
     try {
       await dbStore.deleteBankQuestion(req.params.id);
       res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Admin Participants Listing & Actions
+  app.get('/api/admin/contests/:id/participants', async (req: Request, res: Response) => {
+    try {
+      const participants = await dbStore.getAllParticipants(req.params.id);
+      res.json(participants);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/admin/contests/:contestId/participants/:participantId/action', async (req: Request, res: Response) => {
+    try {
+      const { contestId, participantId } = req.params;
+      const { action, addMinutes, extraMinutes } = req.body;
+      const cId = contestId || 'breach-the-bug-round-2';
+
+      const p = await dbStore.getParticipant(cId, participantId);
+      if (!p) return res.status(404).json({ error: 'Participant not found' });
+
+      if (action === 'disqualify') {
+        const updated = await dbStore.updateParticipant(cId, participantId, {
+          status: 'disqualified',
+        });
+        return res.json({ success: true, participant: updated });
+      }
+
+      if (action === 'reset-timer' || action === 'extend') {
+        const mins = addMinutes || extraMinutes || 10;
+        const addMs = mins * 60 * 1000;
+        const newStartTime = p.startTime + addMs;
+
+        const updated = await dbStore.updateParticipant(cId, participantId, {
+          startTime: newStartTime,
+          status: 'active',
+          endTime: undefined,
+        });
+        return res.json({ success: true, participant: updated });
+      }
+
+      res.status(400).json({ error: `Unknown action "${action}"` });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -640,15 +714,16 @@ export async function createApp() {
     }
   });
 
-  // Admin Timer & Participant Controls
+  // Admin Timer & Participant Controls (legacy routes)
   app.post('/api/admin/participant/reset-timer', async (req: Request, res: Response) => {
     try {
-      const { contestId, participantId, extraMinutes } = req.body;
+      const { contestId, participantId, extraMinutes, addMinutes } = req.body;
       const cId = contestId || 'breach-the-bug-round-2';
       const p = await dbStore.getParticipant(cId, participantId);
       if (!p) return res.status(404).json({ error: 'Participant not found' });
 
-      const addMs = (extraMinutes || 10) * 60 * 1000;
+      const mins = addMinutes || extraMinutes || 10;
+      const addMs = mins * 60 * 1000;
       const newStartTime = p.startTime + addMs;
 
       const updated = await dbStore.updateParticipant(cId, participantId, {

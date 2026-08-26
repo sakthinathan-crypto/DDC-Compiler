@@ -1,8 +1,8 @@
 import bcrypt from 'bcryptjs';
 import * as fs from 'fs';
 import * as path from 'path';
-import { and, eq } from 'drizzle-orm';
-import { db } from './index';
+import { and, eq, sql } from 'drizzle-orm';
+import { db, pool } from './index';
 import {
   accounts,
   admins,
@@ -15,8 +15,167 @@ import {
 } from './schema';
 import { INITIAL_CONTESTS, INITIAL_QUESTION_BANK } from '../../server/questionsData';
 
+export async function createTablesIfNotExist() {
+  const ddl = `
+    CREATE TABLE IF NOT EXISTS admins (
+      id SERIAL PRIMARY KEY,
+      username VARCHAR(100) NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      role VARCHAR(50) NOT NULL DEFAULT 'superadmin',
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS accounts (
+      id TEXT PRIMARY KEY,
+      participant_id VARCHAR(50) NOT NULL UNIQUE,
+      name TEXT NOT NULL,
+      register_number VARCHAR(50) NOT NULL UNIQUE,
+      mobile VARCHAR(30) NOT NULL,
+      email VARCHAR(255) NOT NULL UNIQUE,
+      department TEXT NOT NULL,
+      year VARCHAR(20) NOT NULL,
+      college TEXT NOT NULL,
+      password_hash TEXT NOT NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS questions (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      slug TEXT,
+      category TEXT,
+      difficulty VARCHAR(20) NOT NULL DEFAULT 'Medium',
+      tags JSONB NOT NULL DEFAULT '[]'::jsonb,
+      description TEXT,
+      problem_statement TEXT NOT NULL,
+      input_format TEXT,
+      output_format TEXT,
+      constraints TEXT,
+      language VARCHAR(20) NOT NULL DEFAULT 'python',
+      starter_code TEXT NOT NULL,
+      marks INTEGER NOT NULL DEFAULT 10,
+      time_limit_ms INTEGER NOT NULL DEFAULT 2500,
+      memory_limit_mb INTEGER NOT NULL DEFAULT 256,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS test_cases (
+      id TEXT PRIMARY KEY,
+      question_id TEXT NOT NULL REFERENCES questions(id) ON DELETE CASCADE,
+      input TEXT NOT NULL,
+      expected_output TEXT NOT NULL,
+      is_sample BOOLEAN NOT NULL DEFAULT FALSE,
+      marks INTEGER NOT NULL DEFAULT 0,
+      explanation TEXT,
+      order_index INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS contests (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      tagline TEXT,
+      description TEXT,
+      rules JSONB NOT NULL DEFAULT '[]'::jsonb,
+      organization TEXT NOT NULL DEFAULT 'Designers Domain Club',
+      designed_by TEXT NOT NULL DEFAULT 'Aegis',
+      status VARCHAR(30) NOT NULL DEFAULT 'draft',
+      duration_minutes INTEGER NOT NULL DEFAULT 45,
+      start_date TEXT,
+      start_time TEXT,
+      end_date TEXT,
+      end_time TEXT,
+      is_public BOOLEAN NOT NULL DEFAULT TRUE,
+      allow_registration BOOLEAN NOT NULL DEFAULT TRUE,
+      total_marks INTEGER NOT NULL DEFAULT 50,
+      total_questions INTEGER NOT NULL DEFAULT 5,
+      custom_question_marks JSONB NOT NULL DEFAULT '{}'::jsonb,
+      question_snapshots JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS contest_questions (
+      id SERIAL PRIMARY KEY,
+      contest_id TEXT NOT NULL REFERENCES contests(id) ON DELETE CASCADE,
+      question_id TEXT NOT NULL REFERENCES questions(id) ON DELETE CASCADE,
+      display_order INTEGER NOT NULL DEFAULT 0,
+      marks_override INTEGER,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS contest_participants (
+      id TEXT PRIMARY KEY,
+      contest_id TEXT NOT NULL REFERENCES contests(id) ON DELETE CASCADE,
+      participant_id VARCHAR(50) NOT NULL,
+      account_id TEXT,
+      name TEXT NOT NULL,
+      register_number VARCHAR(50) NOT NULL,
+      email VARCHAR(255) NOT NULL,
+      department TEXT NOT NULL,
+      year VARCHAR(20) NOT NULL,
+      college TEXT,
+      start_time_epoch TEXT NOT NULL,
+      end_time_epoch TEXT,
+      status VARCHAR(30) NOT NULL DEFAULT 'active',
+      score INTEGER NOT NULL DEFAULT 0,
+      solved_count INTEGER NOT NULL DEFAULT 0,
+      completion_time_seconds INTEGER NOT NULL DEFAULT 0,
+      registered_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS submissions (
+      id TEXT PRIMARY KEY,
+      contest_id TEXT NOT NULL REFERENCES contests(id) ON DELETE CASCADE,
+      participant_id VARCHAR(50) NOT NULL,
+      participant_name TEXT NOT NULL,
+      question_id TEXT NOT NULL,
+      question_title TEXT NOT NULL,
+      language VARCHAR(20) NOT NULL,
+      code TEXT NOT NULL,
+      tests_passed INTEGER NOT NULL DEFAULT 0,
+      total_tests INTEGER NOT NULL DEFAULT 0,
+      score INTEGER NOT NULL DEFAULT 0,
+      status VARCHAR(50) NOT NULL,
+      execution_time_ms INTEGER NOT NULL DEFAULT 0,
+      compiler_output TEXT,
+      test_results JSONB NOT NULL DEFAULT '[]'::jsonb,
+      submitted_at_epoch TEXT NOT NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_accounts_email ON accounts(email);
+    CREATE INDEX IF NOT EXISTS idx_accounts_reg_no ON accounts(register_number);
+    CREATE INDEX IF NOT EXISTS idx_accounts_participant_id ON accounts(participant_id);
+    CREATE INDEX IF NOT EXISTS idx_questions_difficulty ON questions(difficulty);
+    CREATE INDEX IF NOT EXISTS idx_questions_language ON questions(language);
+    CREATE INDEX IF NOT EXISTS idx_test_cases_question_id ON test_cases(question_id);
+    CREATE INDEX IF NOT EXISTS idx_contests_status ON contests(status);
+    CREATE INDEX IF NOT EXISTS idx_contests_is_public ON contests(is_public);
+    CREATE INDEX IF NOT EXISTS idx_cq_contest_id ON contest_questions(contest_id);
+    CREATE INDEX IF NOT EXISTS idx_cp_contest_id ON contest_participants(contest_id);
+    CREATE INDEX IF NOT EXISTS idx_cp_participant_id ON contest_participants(participant_id);
+    CREATE INDEX IF NOT EXISTS idx_submissions_contest_id ON submissions(contest_id);
+    CREATE INDEX IF NOT EXISTS idx_submissions_participant_id ON submissions(participant_id);
+  `;
+
+  await pool.query(ddl);
+}
+
 export async function seedDatabase() {
   console.log('🔄 Starting idempotent database synchronization and migration...');
+
+  // 0. Auto-create all tables if they don't exist yet in PostgreSQL / Neon
+  try {
+    await createTablesIfNotExist();
+    console.log('✅ PostgreSQL Schema tables verified / provisioned.');
+  } catch (tableErr) {
+    console.error('Notice on table initialization:', tableErr);
+  }
 
   // 1. Seed or update Admin Account
   const defaultAdminPass = process.env.ADMIN_PASSWORD || 'aegis2026';
