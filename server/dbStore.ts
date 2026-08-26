@@ -1,6 +1,6 @@
 import bcrypt from 'bcryptjs';
 import { and, eq } from 'drizzle-orm';
-import { db } from '../src/db/index';
+import { db, pool } from '../src/db/index';
 import { seedDatabase } from '../src/db/seed';
 import { INITIAL_CONTESTS, INITIAL_QUESTION_BANK } from './questionsData';
 import {
@@ -1004,7 +1004,29 @@ export class DatabaseStore {
           },
         });
     } catch (insertErr) {
-      console.error('Notice inserting contest participant:', insertErr);
+      console.warn('Notice inserting contest participant via Drizzle, trying raw query:', (insertErr as any)?.message);
+      try {
+        await pool.query(
+          `INSERT INTO contest_participants (id, contest_id, participant_id, account_id, name, register_number, email, department, year, college, start_time, start_time_epoch, status, score, solved_count, completion_time_seconds, registered_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11, 'active', 0, 0, 0, NOW(), NOW())
+           ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, department = EXCLUDED.department, year = EXCLUDED.year, college = EXCLUDED.college, updated_at = NOW()`,
+          [
+            sessionKey,
+            contestId,
+            account.participantId,
+            account.id,
+            account.name,
+            account.registerNumber,
+            account.email,
+            account.department,
+            account.year,
+            account.college || null,
+            String(newParticipant.startTime),
+          ]
+        );
+      } catch (rawErr) {
+        console.warn('Notice saving contest participant via raw query:', (rawErr as any)?.message);
+      }
     }
 
     const timeRemaining = await this.getParticipantTimeRemainingSeconds(
@@ -1118,7 +1140,28 @@ export class DatabaseStore {
           },
         });
     } catch (insertErr) {
-      console.warn('Notice saving participant session:', (insertErr as any)?.message);
+      console.warn('Notice saving participant session via Drizzle, trying raw query:', (insertErr as any)?.message);
+      try {
+        await pool.query(
+          `INSERT INTO contest_participants (id, contest_id, participant_id, name, register_number, email, department, year, college, start_time, start_time_epoch, status, score, solved_count, completion_time_seconds, registered_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10, 'active', 0, 0, 0, NOW(), NOW())
+           ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, department = EXCLUDED.department, year = EXCLUDED.year, college = EXCLUDED.college, updated_at = NOW()`,
+          [
+            sessionKey,
+            contestId,
+            data.participantId,
+            data.name,
+            data.registerNumber,
+            data.email,
+            data.department,
+            data.year,
+            data.college || null,
+            String(newPart.startTime),
+          ]
+        );
+      } catch (rawErr) {
+        console.warn('Notice saving participant via raw query:', (rawErr as any)?.message);
+      }
     }
 
     this.broadcast('participant_registered', { contestId, participant: newPart });
@@ -1255,7 +1298,34 @@ export class DatabaseStore {
         submittedAt: String(submission.submittedAt),
       }).onConflictDoNothing();
     } catch (subErr) {
-      console.warn('Notice saving submission to DB:', (subErr as any)?.message);
+      console.warn('Notice saving submission via Drizzle, trying raw query:', (subErr as any)?.message);
+      try {
+        await pool.query(
+          `INSERT INTO submissions (id, contest_id, participant_id, participant_name, question_id, question_title, language, code, tests_passed, total_tests, score, status, execution_time_ms, compiler_output, test_results, submitted_at, submitted_at_epoch, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $16, NOW())
+           ON CONFLICT (id) DO NOTHING`,
+          [
+            submission.id,
+            submission.contestId,
+            submission.participantId,
+            submission.participantName,
+            submission.questionId,
+            submission.questionTitle,
+            submission.language,
+            submission.code,
+            submission.testsPassed,
+            submission.totalTests,
+            submission.score,
+            submission.status,
+            submission.executionTimeMs || 0,
+            submission.compilerOutput || null,
+            JSON.stringify(submission.testResults || []),
+            String(submission.submittedAt),
+          ]
+        );
+      } catch (rawSubErr) {
+        console.warn('Notice saving submission via raw query:', (rawSubErr as any)?.message);
+      }
     }
 
     // Recalculate participant score for this contest

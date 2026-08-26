@@ -192,19 +192,26 @@ export async function createTablesIfNotExist() {
     `ALTER TABLE contest_participants ADD COLUMN IF NOT EXISTS score INTEGER NOT NULL DEFAULT 0`,
     `ALTER TABLE contest_participants ADD COLUMN IF NOT EXISTS solved_count INTEGER NOT NULL DEFAULT 0`,
     `ALTER TABLE contest_participants ADD COLUMN IF NOT EXISTS completion_time_seconds INTEGER NOT NULL DEFAULT 0`,
-    `ALTER TABLE contest_participants ADD COLUMN IF NOT EXISTS start_time_epoch TEXT`,
+    `ALTER TABLE contest_participants ADD COLUMN IF NOT EXISTS start_time_epoch TEXT DEFAULT ''`,
     `ALTER TABLE contest_participants ADD COLUMN IF NOT EXISTS end_time_epoch TEXT`,
-    `ALTER TABLE contest_participants ADD COLUMN IF NOT EXISTS start_time TEXT`,
+    `ALTER TABLE contest_participants ADD COLUMN IF NOT EXISTS start_time TEXT DEFAULT ''`,
     `ALTER TABLE contest_participants ADD COLUMN IF NOT EXISTS end_time TEXT`,
     `ALTER TABLE contest_participants ALTER COLUMN start_time DROP NOT NULL`,
+    `ALTER TABLE contest_participants ALTER COLUMN start_time SET DEFAULT ''`,
+    `ALTER TABLE contest_participants ALTER COLUMN start_time_epoch DROP NOT NULL`,
+    `ALTER TABLE contest_participants ALTER COLUMN start_time_epoch SET DEFAULT ''`,
     `ALTER TABLE contest_participants ALTER COLUMN end_time DROP NOT NULL`,
+    `ALTER TABLE contest_participants ALTER COLUMN end_time_epoch DROP NOT NULL`,
 
     `ALTER TABLE submissions ADD COLUMN IF NOT EXISTS execution_time_ms INTEGER NOT NULL DEFAULT 0`,
     `ALTER TABLE submissions ADD COLUMN IF NOT EXISTS compiler_output TEXT`,
     `ALTER TABLE submissions ADD COLUMN IF NOT EXISTS test_results JSONB NOT NULL DEFAULT '[]'::jsonb`,
-    `ALTER TABLE submissions ADD COLUMN IF NOT EXISTS submitted_at_epoch TEXT`,
-    `ALTER TABLE submissions ADD COLUMN IF NOT EXISTS submitted_at TEXT`,
+    `ALTER TABLE submissions ADD COLUMN IF NOT EXISTS submitted_at_epoch TEXT DEFAULT ''`,
+    `ALTER TABLE submissions ADD COLUMN IF NOT EXISTS submitted_at TEXT DEFAULT ''`,
     `ALTER TABLE submissions ALTER COLUMN submitted_at DROP NOT NULL`,
+    `ALTER TABLE submissions ALTER COLUMN submitted_at SET DEFAULT ''`,
+    `ALTER TABLE submissions ALTER COLUMN submitted_at_epoch DROP NOT NULL`,
+    `ALTER TABLE submissions ALTER COLUMN submitted_at_epoch SET DEFAULT ''`,
 
     `CREATE INDEX IF NOT EXISTS idx_accounts_email ON accounts(email)`,
     `CREATE INDEX IF NOT EXISTS idx_accounts_reg_no ON accounts(register_number)`,
@@ -221,16 +228,25 @@ export async function createTablesIfNotExist() {
     `CREATE INDEX IF NOT EXISTS idx_submissions_participant_id ON submissions(participant_id)`,
   ];
 
-  try {
-    await pool.query(statements.join(';\n'));
-  } catch (_batchErr) {
-    for (const stmt of statements) {
-      try {
-        await pool.query(stmt);
-      } catch (_singleErr) {
-        // Safe to ignore expected column/index notice
-      }
+  for (const stmt of statements) {
+    try {
+      await pool.query(stmt);
+    } catch (_singleErr) {
+      // Safe to ignore non-blocking ALTER notices
     }
+  }
+
+  // Pre-seed core contests directly with raw SQL to guarantee foreign key integrity
+  try {
+    await pool.query(`
+      INSERT INTO contests (id, title, tagline, description, rules, organization, designed_by, status, duration_minutes, total_marks, total_questions, is_public, allow_registration, created_at, updated_at)
+      VALUES 
+        ('breach-the-bug-round-2', 'Breach the Bug - Round 2', 'Code & Logic Debugging Arena', 'Compete in live coding and bug-fixing challenges.', '[]'::jsonb, 'Designers Domain Club', 'Aegis', 'active', 45, 50, 5, true, true, NOW(), NOW()),
+        ('code-debugging-round-1', 'Code Debugging - Round 1', 'Syntax & Algorithmic Debugging', 'Fix buggy code implementations against rigorous test cases.', '[]'::jsonb, 'Designers Domain Club', 'Aegis', 'completed', 30, 40, 4, true, true, NOW(), NOW())
+      ON CONFLICT (id) DO NOTHING;
+    `);
+  } catch (_contestErr) {
+    // Ignore if already existing
   }
 }
 
