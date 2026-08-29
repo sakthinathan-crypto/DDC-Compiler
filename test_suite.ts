@@ -242,6 +242,8 @@ int main() {
 `,
   'btb3-q5': `import sys
 def min_coins(coins, amount):
+    if amount == 0:
+        return 0
     dp = [float('inf')] * (amount + 1)
     dp[0] = 0
     for coin in coins:
@@ -249,11 +251,12 @@ def min_coins(coins, amount):
             dp[x] = min(dp[x], dp[x - coin] + 1)
     return dp[amount] if dp[amount] != float('inf') else -1
 def main():
-    lines = sys.stdin.read().splitlines()
-    if len(lines) < 2:
+    raw = sys.stdin.read().split()
+    if not raw:
         return
-    n, amount = map(int, lines[0].split())
-    coins = [int(x) for x in lines[1].split()]
+    n = int(raw[0])
+    amount = int(raw[1])
+    coins = [int(x) for x in raw[2:2+n]]
     print(min_coins(coins, amount))
 if __name__ == '__main__':
     main()

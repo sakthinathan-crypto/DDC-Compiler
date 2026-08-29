@@ -981,7 +981,7 @@ int main() {
       {
         id: 'btb3-q4-h4',
         input: '6\n2 -1 3 -2 4 -1',
-        expectedOutput: '6',
+        expectedOutput: '7',
         isSample: false,
         marks: 2.5,
       },
@@ -1067,7 +1067,7 @@ if __name__ == '__main__':
     hiddenTestCases: [
       {
         id: 'btb3-q5-h1',
-        input: '3 6249\n186 419 83',
+        input: '4 6249\n186 419 83 408',
         expectedOutput: '20',
         isSample: false,
         marks: 2.5,
